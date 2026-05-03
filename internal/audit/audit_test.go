@@ -16,7 +16,7 @@ func TestAuditWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	rec := Record{
 		Timestamp: time.Date(2026, 5, 2, 14, 30, 0, 0, time.UTC),
@@ -39,7 +39,7 @@ func TestAuditWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(f)
 	if !scanner.Scan() {
 		t.Fatal("expected one line")
@@ -67,7 +67,7 @@ func TestAuditAppend(t *testing.T) {
 			t.Fatalf("Write: %v", err)
 		}
 	}
-	log.Close()
+	_ = log.Close()
 
 	files, _ := filepath.Glob(filepath.Join(dir, "audit-*.jsonl"))
 	data, _ := os.ReadFile(files[0])
