@@ -10,7 +10,7 @@
 
 ## Status
 
-**Alpha — not yet usable.** This repo currently contains the scaffolding, vision, and roadmap. The first installable release is targeted for v0.1.
+**v0.1 — CLI usable.** The CLI is feature-complete for the three modules ported from the bash prototypes (startup, caches, dev). The daemon, menubar app, and Brew tap arrive in 0.2–0.4. See [docs/plans/](docs/plans/) for the roadmap.
 
 ## Why
 
@@ -68,11 +68,22 @@ We treat your filesystem as production data. The defaults reflect that:
 
 ## Install
 
-Not yet — see [Status](#status). Once 0.1 ships:
+From source (until 0.4 ships the Brew tap):
 
 ```sh
-brew install frikkjarl/noo-noo/noo-noo
+go install github.com/frikkjarl/noo-noo/cmd/noo-noo@v0.1.0
 ```
+
+Then:
+
+```sh
+noo-noo report           # full diagnosis
+noo-noo dev list         # scan ~/Documents/GitHub for build artifacts
+noo-noo caches clean     # wipe known cache directories
+noo-noo startup disable  # disable known launchd auto-start bloat
+```
+
+All destructive commands prompt for confirmation; pass `-y` to skip. `--dry-run` shows what would happen.
 
 ## Develop
 
