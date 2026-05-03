@@ -704,7 +704,120 @@ case "$TASK" in
     pass
     ;;
 
+  69)
+    require_commit_prefix "chore(verify):"
+    require_files_changed "scripts/verify/verify-task.sh"
+    require_cmd "bash -n scripts/verify/verify-task.sh" "syntax check"
+    pass
+    ;;
+
+  70)
+    require_commit_prefix "feat(release):"
+    require_files_changed ".github/workflows/release.yml"
+    require_cmd "yamllint -d relaxed .github/workflows/release.yml" "yamllint"
+    require_cmd "actionlint .github/workflows/release.yml" "actionlint"
+    pass
+    ;;
+
+  71)
+    require_commit_prefix "feat(release):"
+    require_files_changed "build/release/build-binaries.sh"
+    require_cmd "bash -n build/release/build-binaries.sh" "bash syntax"
+    require_cmd "shellcheck build/release/build-binaries.sh" "shellcheck"
+    pass
+    ;;
+
+  72)
+    require_commit_prefix "feat(release):"
+    require_files_changed "build/release/build-app.sh"
+    require_cmd "bash -n build/release/build-app.sh" "bash syntax"
+    require_cmd "shellcheck build/release/build-app.sh" "shellcheck"
+    pass
+    ;;
+
+  73)
+    require_commit_prefix "feat(release):"
+    require_files_changed "build/release/build-dmg.sh"
+    require_cmd "bash -n build/release/build-dmg.sh" "bash syntax"
+    require_cmd "shellcheck build/release/build-dmg.sh" "shellcheck"
+    pass
+    ;;
+
+  74)
+    require_commit_prefix "feat(release):"
+    require_files_changed "build/release/checksums.sh"
+    require_cmd "bash -n build/release/checksums.sh" "bash syntax"
+    require_cmd "shellcheck build/release/checksums.sh" "shellcheck"
+    pass
+    ;;
+
+  75)
+    require_commit_prefix "feat(brew):"
+    require_files_changed "build/brew/noo-noo.rb" "build/brew/noo-noo-formula.rb"
+    require_cmd "ruby -c build/brew/noo-noo.rb" "ruby syntax (cask)"
+    require_cmd "ruby -c build/brew/noo-noo-formula.rb" "ruby syntax (formula)"
+    pass
+    ;;
+
+  76)
+    require_commit_prefix "docs:"
+    require_files_changed "CHANGELOG.md"
+    require_cmd "grep -q '## \\[0.4.0\\]' CHANGELOG.md" "0.4.0 entry"
+    require_cmd "grep -q '## \\[0.3.0\\]' CHANGELOG.md" "0.3.0 entry"
+    pass
+    ;;
+
+  77)
+    require_commit_prefix "docs:"
+    require_files_changed "README.md"
+    require_cmd "grep -q 'brew tap FRIKKern/tap' README.md" "tap install line"
+    require_cmd "grep -q 'brew install noo-noo' README.md" "brew install line"
+    pass
+    ;;
+
+  78)
+    require_commit_prefix "feat(release):"
+    require_files_changed "scripts/release.sh"
+    require_cmd "bash -n scripts/release.sh" "bash syntax"
+    require_cmd "shellcheck scripts/release.sh" "shellcheck"
+    pass
+    ;;
+
+  79)
+    # Smoke-tests the four release scripts; verifier checks artifacts exist.
+    require_commit_prefix "test(release):"
+    require_files_changed "build/release/build-binaries.sh" "build/release/build-app.sh" "build/release/build-dmg.sh" "build/release/checksums.sh"
+    require_cmd "bash scripts/release.sh --dry-run" "release dry-run"
+    require_cmd "test -e dist/Noo-Noo.app" "Noo-Noo.app produced"
+    require_cmd "ls dist/Noo-Noo-*.dmg >/dev/null 2>&1" "dmg produced"
+    require_cmd "test -f dist/checksums.txt" "checksums produced"
+    pass
+    ;;
+
+  80)
+    require_commit_prefix "docs:"
+    require_files_changed "README.md"
+    require_cmd "grep -q 'FRIKKern/homebrew-tap' README.md" "tap repo reference"
+    require_cmd "grep -q 'gh repo create' README.md" "bootstrap instruction"
+    pass
+    ;;
+
+  81)
+    # External-state task: validates that an rc tag triggered a successful run.
+    require_commit_prefix "test(release):"
+    require_files_changed ".github/workflows/release.yml"
+    require_cmd "gh run list --workflow=release.yml --limit 1 --json conclusion -q '.[0].conclusion' | grep -q success" "rc workflow succeeded"
+    pass
+    ;;
+
+  82)
+    require_commit_prefix "docs:"
+    require_files_changed "README.md"
+    require_cmd "git tag --list | grep -q '^v0.4.0$'" "v0.4.0 tag exists"
+    pass
+    ;;
+
   *)
-    fail "unknown task id $TASK (valid: 1-68)"
+    fail "unknown task id $TASK (valid: 1-82)"
     ;;
 esac
