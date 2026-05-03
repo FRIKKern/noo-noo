@@ -3,7 +3,7 @@
 > A lightweight, smart, opt-in cleanup daemon for Mac developers — inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner.
 
 [![CI](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml/badge.svg)](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)]()
+[![Status: v0.2](https://img.shields.io/badge/status-v0.2-blue.svg)](#status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go: 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://go.dev)
 
@@ -11,7 +11,15 @@
 
 ## Status
 
-**v0.1 — CLI usable.** The CLI is feature-complete for the three modules ported from the bash prototypes (startup, caches, dev). The daemon, menubar app, and Brew tap arrive in 0.2–0.4. See [docs/plans/](docs/plans/) for the roadmap.
+**v0.2 — Daemon usable. Smart suggestions active.** A background daemon (`noo-nood`) runs under `launchd`, samples cache directories on a daily tick, scores repository idleness, and surfaces actionable suggestions through `noo-noo suggestions list`. macOS notifications fire when something worth your attention shows up. The menubar app and Brew tap arrive in 0.3–0.4. See [docs/plans/](docs/plans/) for the roadmap.
+
+What ships in v0.2:
+
+- `noo-nood` daemon supervised by `launchd` (LaunchAgent, no `sudo`).
+- Persistent SQLite store at `~/Library/Application Support/noo-noo/store.db`.
+- JSON-RPC over a Unix socket (Daemon.Status, Report.Full, Suggestions.List, Suggestions.Dismiss, Clean.Execute).
+- Two heuristic engines: idle repos (low risk) and cache velocity (medium risk).
+- macOS notifications via `osascript`, gated by a configurable severity threshold.
 
 ## Why
 
@@ -61,27 +69,48 @@ We treat your filesystem as production data. The defaults reflect that:
 
 | Version | What ships | Status |
 |---|---|---|
-| **0.1** | Daemon + CLI; daily scan; the three cleanup modes (startup, caches, dev artifacts) from the bash prototype | planned |
-| **0.2** | Smart heuristics: repo-idleness scoring, cache-velocity tracking, first "smart suggestion" notification | planned |
+| **0.1** | CLI MVP; the three cleanup modes (startup, caches, dev artifacts) from the bash prototype | shipped |
+| **0.2** | `noo-nood` daemon under launchd; SQLite store; JSON-RPC IPC; idle-repo + cache-velocity heuristics; first "smart suggestion" notification | shipped |
 | **0.3** | `Noo-Noo.app` — Wails v3 menubar with status badge | planned |
 | **0.4** | Notarized release, Homebrew tap, docs site | planned |
-| **0.5** | System-pressure-triggered scans, adaptive scheduling | planned |
+| **0.5** | System-pressure-triggered scans, adaptive scheduling, opt-in auto-clean | planned |
 
 ## Install
 
 From source (until 0.4 ships the Brew tap):
 
 ```sh
-go install github.com/FRIKKern/noo-noo/cmd/noo-noo@v0.1.0
+git clone https://github.com/FRIKKern/noo-noo.git && cd noo-noo
+go install ./cmd/noo-noo ./cmd/noo-nood
+
+# Install the daemon under launchd. Writes
+# ~/Library/LaunchAgents/io.noo-noo.d.plist and bootstraps it via
+# launchctl, so noo-nood auto-starts at login and survives reboots.
+noo-noo install
 ```
 
-Then:
+Uninstall with `noo-noo uninstall` (removes the LaunchAgent; leaves the SQLite store in place).
+
+## Usage
+
+One-shot CLI (Phase 0.1, unchanged):
 
 ```sh
 noo-noo report           # full diagnosis
 noo-noo dev list         # scan ~/Documents/GitHub for build artifacts
 noo-noo caches clean     # wipe known cache directories
 noo-noo startup disable  # disable known launchd auto-start bloat
+```
+
+Daemon-driven workflow (new in v0.2):
+
+```sh
+noo-noo daemon status         # is noo-nood running? for how long?
+noo-noo daemon start          # launchctl bootstrap (one-shot)
+noo-noo daemon stop           # launchctl bootout
+
+noo-noo suggestions list      # what has the daemon flagged?
+noo-noo suggestions dismiss 17  # mark suggestion #17 as handled
 ```
 
 All destructive commands prompt for confirmation; pass `-y` to skip. `--dry-run` shows what would happen.
