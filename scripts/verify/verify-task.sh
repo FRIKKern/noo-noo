@@ -465,8 +465,10 @@ case "$TASK" in
     ;;
 
   39)
+    # server.go is in the allowlist because Task 35 included a placeholder
+    # Status to satisfy rpc.RegisterName; this task moves it out.
     require_commit_prefix "feat(ipc):"
-    require_files_changed "internal/ipc/daemon_method.go" "internal/ipc/daemon_method_test.go"
+    require_files_changed "internal/ipc/daemon_method.go" "internal/ipc/daemon_method_test.go" "internal/ipc/server.go"
     require_test "./internal/ipc/" "TestDaemonStatus"
     require_cmd "make lint" "make lint"
     pass
