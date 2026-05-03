@@ -1,0 +1,121 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # for creating releases
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cmd/noo-noo-app/frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: cmd/noo-noo-app/frontend
+        run: npm ci
+
+      - name: Build binaries (universal)
+        run: bash build/release/build-binaries.sh
+
+      - name: Build .app bundle (ad-hoc signed)
+        run: bash build/release/build-app.sh
+
+      - name: Build .dmg
+        run: bash build/release/build-dmg.sh
+
+      - name: Generate checksums
+        run: bash build/release/checksums.sh
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          awk -v v="$ver" '
+            $0 ~ "^## \\[" v "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "notes_path=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: noo-noo ${{ github.ref_name }}
+          body_path: ${{ steps.changelog.outputs.notes_path }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/noo-noo
+            dist/noo-nood
+            dist/Noo-Noo.app.zip
+            dist/Noo-Noo-${{ github.ref_name }}.dmg
+            dist/noo-noo-${{ github.ref_name }}-darwin.tar.gz
+            dist/checksums.txt
+
+      - name: Render Brew templates
+        id: render
+        run: |
+          set -euo pipefail
+          ver="${VERSION#v}"
+          dmg="dist/Noo-Noo-${VERSION}.dmg"
+          tgz="dist/noo-noo-${VERSION}-darwin.tar.gz"
+          sha_dmg=$(shasum -a 256 "$dmg" | awk '{print $1}')
+          sha_tgz=$(shasum -a 256 "$tgz" | awk '{print $1}')
+          mkdir -p rendered/Casks rendered/Formula
+          sed \
+            -e "s/__VERSION__/${ver}/g" \
+            -e "s/__SHA256_DMG__/${sha_dmg}/g" \
+            build/brew/noo-noo.rb > rendered/Casks/noo-noo.rb
+          sed \
+            -e "s/__VERSION__/${ver}/g" \
+            -e "s/__SHA256_TARBALL__/${sha_tgz}/g" \
+            build/brew/noo-noo-formula.rb > rendered/Formula/noo-noo.rb
+
+      - name: Push to homebrew-tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/FRIKKern/homebrew-tap.git" "$tmpdir"
+          cp rendered/Casks/noo-noo.rb "$tmpdir/Casks/noo-noo.rb"
+          cp rendered/Formula/noo-noo.rb "$tmpdir/Formula/noo-noo.rb"
+          cd "$tmpdir"
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add Casks/noo-noo.rb Formula/noo-noo.rb
+          if git diff --cached --quiet; then
+            echo "no formula changes; skipping push"
+            exit 0
+          fi
+          git commit -m "chore(brew): noo-noo ${VERSION}"
+          git push origin HEAD:main
