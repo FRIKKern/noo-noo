@@ -526,7 +526,185 @@ case "$TASK" in
     pass
     ;;
 
+  46)
+    # syntax check only (avoids recursion).
+    require_commit_prefix "chore(verify):"
+    require_files_changed "scripts/verify/verify-task.sh"
+    require_cmd "bash -n scripts/verify/verify-task.sh" "bash -n scripts/verify/verify-task.sh"
+    pass
+    ;;
+
+  47)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/protocol.go" "internal/ipc/trigger_method.go" "internal/ipc/trigger_method_test.go" "internal/ipc/server.go"
+    require_test "./internal/ipc/" "TestTriggerScan"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  48)
+    require_commit_prefix "chore(deps):"
+    require_files_changed "go.mod" "go.sum"
+    require_cmd "go mod tidy && git diff --quiet -- go.mod go.sum" "go mod tidy clean (no diff)"
+    require_cmd "grep -q 'github.com/wailsapp/wails/v3' go.mod" "wails v3 in go.mod"
+    require_cmd "go build ./..." "go build ./..."
+    pass
+    ;;
+
+  49)
+    require_commit_prefix "chore(scaffold):"
+    require_files_changed "cmd/noo-noo-app/main.go" "cmd/noo-noo-app/Info.plist.tmpl" "cmd/noo-noo-app/build/appicon.png"
+    require_build "./cmd/noo-noo-app/"
+    pass
+    ;;
+
+  50)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/main.go" "cmd/noo-noo-app/main_test.go"
+    require_test "./cmd/noo-noo-app/" "TestMainNoOp"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  51)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/icon.go" "internal/menubar/icon_test.go"
+    require_test "./internal/menubar/" "TestIcon"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  52)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/menu.go" "internal/menubar/menu_test.go"
+    require_test "./internal/menubar/" "TestMenu"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  53)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/click.go" "internal/menubar/click_test.go"
+    require_test "./internal/menubar/" "TestClick"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  54)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/poller.go" "internal/menubar/poller_test.go"
+    require_test "./internal/menubar/" "TestPoller"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  55)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/main.go" "cmd/noo-noo-app/main_test.go"
+    require_test "./cmd/noo-noo-app/" "TestWiring"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  56)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/menu.go" "internal/menubar/menu_test.go"
+    require_test "./internal/menubar/" "TestMenu_Badge"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  57)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/menu.go" "internal/menubar/menu_test.go"
+    require_test "./internal/menubar/" "TestMenu_Submenu"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  58)
+    require_commit_prefix "feat(menubar):"
+    require_files_changed "internal/menubar/click.go" "internal/menubar/click_test.go"
+    require_test "./internal/menubar/" "TestClick_Trigger"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  59)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/main.go" "cmd/noo-noo-app/bindings.go"
+    require_test "./cmd/noo-noo-app/" "TestOpenSettings"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  60)
+    require_commit_prefix "chore(scaffold):"
+    require_files_changed "cmd/noo-noo-app/frontend/package.json" "cmd/noo-noo-app/frontend/svelte.config.js" "cmd/noo-noo-app/frontend/vite.config.ts" "cmd/noo-noo-app/frontend/tsconfig.json" "cmd/noo-noo-app/frontend/index.html" "cmd/noo-noo-app/frontend/src/main.ts" "cmd/noo-noo-app/frontend/src/App.svelte"
+    require_cmd "(cd cmd/noo-noo-app/frontend && npm install --silent && npm run build --silent)" "frontend build"
+    pass
+    ;;
+
+  61)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/frontend/src/Settings.svelte" "cmd/noo-noo-app/frontend/src/lib/api.ts"
+    require_cmd "(cd cmd/noo-noo-app/frontend && npm run build --silent)" "frontend build"
+    pass
+    ;;
+
+  62)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/bindings.go" "cmd/noo-noo-app/bindings_test.go"
+    require_test "./cmd/noo-noo-app/" "TestBindings_Config"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  63)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/frontend/src/Settings.svelte" "cmd/noo-noo-app/bindings.go" "cmd/noo-noo-app/bindings_test.go"
+    require_test "./cmd/noo-noo-app/" "TestBindings_Save"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  64)
+    require_commit_prefix "feat(app):"
+    require_files_changed "cmd/noo-noo-app/frontend/src/lib/theme.css" "cmd/noo-noo-app/frontend/src/Settings.svelte"
+    require_cmd "(cd cmd/noo-noo-app/frontend && npm run build --silent)" "frontend build"
+    pass
+    ;;
+
+  65)
+    require_commit_prefix "build:"
+    require_files_changed "Makefile"
+    require_cmd "make -n app app-dev app-package" "make targets exist"
+    pass
+    ;;
+
+  66)
+    require_commit_prefix "build:"
+    require_files_changed "Makefile" "cmd/noo-noo-app/Info.plist.tmpl"
+    require_cmd "make app-package && grep -q LSUIElement build/Noo-Noo.app/Contents/Info.plist" "app bundle has LSUIElement"
+    pass
+    ;;
+
+  67)
+    require_commit_prefix "test(e2e):"
+    require_files_changed "cmd/noo-noo-app/e2e_test.go"
+    require_test "./cmd/noo-noo-app/" "TestEndToEnd"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  68)
+    require_commit_prefix "docs:"
+    require_files_changed "README.md"
+    require_cmd "git tag --list | grep -q '^v0.3.0$'" "v0.3.0 tag exists"
+    pass
+    ;;
+
   *)
-    fail "unknown task id $TASK (valid: 1-45)"
+    fail "unknown task id $TASK (valid: 1-68)"
     ;;
 esac
