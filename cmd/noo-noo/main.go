@@ -1,10 +1,27 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
-const version = "0.0.0-alpha.0"
+	"github.com/frikkjarl/noo-noo/internal/cli"
+)
+
+const version = "0.1.0"
 
 func main() {
-	fmt.Printf("noo-noo %s — alpha, not yet implemented.\n", version)
-	fmt.Println("See https://github.com/frikkjarl/noo-noo for status.")
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		_, _ = fmt.Fprintf(os.Stdout, "noo-noo %s\n", version)
+		os.Exit(0)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	app := &cli.App{Out: os.Stdout, Err: os.Stderr}
+	os.Exit(app.Run(ctx, os.Args))
 }
