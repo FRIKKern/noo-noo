@@ -544,7 +544,7 @@ case "$TASK" in
 
   48)
     require_commit_prefix "chore(deps):"
-    require_files_changed "go.mod" "go.sum"
+    require_files_changed "go.mod" "go.sum" "tools.go"
     require_cmd "go mod tidy && git diff --quiet -- go.mod go.sum" "go mod tidy clean (no diff)"
     require_cmd "grep -q 'github.com/wailsapp/wails/v3' go.mod" "wails v3 in go.mod"
     require_cmd "go build ./..." "go build ./..."
