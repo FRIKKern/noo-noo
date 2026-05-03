@@ -3,7 +3,7 @@
 > A lightweight, smart, opt-in cleanup daemon for Mac developers — inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner.
 
 [![CI](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml/badge.svg)](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml)
-[![Status: v0.2](https://img.shields.io/badge/status-v0.2-blue.svg)](#status)
+[![Status: v0.3](https://img.shields.io/badge/status-v0.3-blue.svg)](#status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go: 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://go.dev)
 
@@ -11,15 +11,29 @@
 
 ## Status
 
-**v0.2 — Daemon usable. Smart suggestions active.** A background daemon (`noo-nood`) runs under `launchd`, samples cache directories on a daily tick, scores repository idleness, and surfaces actionable suggestions through `noo-noo suggestions list`. macOS notifications fire when something worth your attention shows up. The menubar app and Brew tap arrive in 0.3–0.4. See [docs/plans/](docs/plans/) for the roadmap.
+**v0.3 — Menubar app shipped.** `Noo-Noo.app` (Wails v3 + Svelte 5) lives in the macOS menubar with a live open-suggestion badge, a top-3 suggestions submenu, an on-demand "Run Scan Now" trigger, and a Settings window for the daily scan hour, heuristic toggles & thresholds, and notification preferences. The Phase 0.2 daemon is unchanged; the app is a thin frontend over the existing JSON-RPC IPC. See [docs/plans/](docs/plans/) for the roadmap.
 
-What ships in v0.2:
+What's new in v0.3:
+
+- **`Noo-Noo.app`** — macOS menubar app (LSUIElement, no dock icon).
+- **Status badge** showing the open-suggestion count (with singular/plural handling).
+- **Suggestions submenu** with the top three open suggestions inline + a "See all…" trailer.
+- **Run Scan Now** — on-demand scan via the new `Daemon.TriggerScan` IPC.
+- **Settings window** (Svelte 5) for the daily scan hour, heuristic toggles & thresholds, and notifications. Atomic write-then-rename to `~/.config/noo-noo/config.toml`.
+
+What ships in v0.2 (still current):
 
 - `noo-nood` daemon supervised by `launchd` (LaunchAgent, no `sudo`).
 - Persistent SQLite store at `~/Library/Application Support/noo-noo/store.db`.
-- JSON-RPC over a Unix socket (Daemon.Status, Report.Full, Suggestions.List, Suggestions.Dismiss, Clean.Execute).
+- JSON-RPC over a Unix socket (Daemon.Status, Report.Full, Suggestions.List, Suggestions.Dismiss, Clean.Execute, Daemon.TriggerScan).
 - Two heuristic engines: idle repos (low risk) and cache velocity (medium risk).
 - macOS notifications via `osascript`, gated by a configurable severity threshold.
+
+## What does NOT ship in 0.3
+
+- **Notarization & Apple Developer ID signing** — Phase 0.4. The `.app` is ad-hoc signed; first launch needs a Right-click > Open to bypass Gatekeeper.
+- **Homebrew tap** — Phase 0.4.
+- **Hot-reloadable config** — Phase 0.3.1. Today, the daemon picks up `config.toml` changes on next restart.
 
 ## Why
 
@@ -71,7 +85,7 @@ We treat your filesystem as production data. The defaults reflect that:
 |---|---|---|
 | **0.1** | CLI MVP; the three cleanup modes (startup, caches, dev artifacts) from the bash prototype | shipped |
 | **0.2** | `noo-nood` daemon under launchd; SQLite store; JSON-RPC IPC; idle-repo + cache-velocity heuristics; first "smart suggestion" notification | shipped |
-| **0.3** | `Noo-Noo.app` — Wails v3 menubar with status badge | planned |
+| **0.3** | `Noo-Noo.app` — Wails v3 menubar with status badge, suggestions submenu, Run Scan Now, Settings window | shipped |
 | **0.4** | Notarized release, Homebrew tap, docs site | planned |
 | **0.5** | System-pressure-triggered scans, adaptive scheduling, opt-in auto-clean | planned |
 
@@ -90,6 +104,16 @@ noo-noo install
 ```
 
 Uninstall with `noo-noo uninstall` (removes the LaunchAgent; leaves the SQLite store in place).
+
+### Menubar app (v0.3, ad-hoc signed)
+
+```sh
+make app-package                       # builds build/Noo-Noo.app + ad-hoc signs
+cp -R build/Noo-Noo.app /Applications/
+open /Applications/Noo-Noo.app         # menubar icon appears; no dock icon
+```
+
+First launch: Right-click > Open to bypass Gatekeeper (the bundle is ad-hoc signed; notarization arrives in 0.4). The daemon must be running (`noo-noo install` then `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/io.noo-noo.d.plist`).
 
 ## Usage
 
@@ -121,9 +145,13 @@ All destructive commands prompt for confirmation; pass `-y` to skip. `--dry-run`
 git clone https://github.com/FRIKKern/noo-noo.git
 cd noo-noo
 go test ./...
+
+# Menubar app dev loop (v0.3+):
+make app-dev      # vite dev server + go run ./cmd/noo-noo-app
+make app-package  # full bundle + ad-hoc sign for local installs
 ```
 
-The Wails v3 frontend will land in v0.3. See [CONTRIBUTING.md](CONTRIBUTING.md) for project values and code style.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project values and code style.
 
 ## Contributing
 
