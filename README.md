@@ -183,3 +183,77 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECUR
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Maintainer notes
+
+### One-time tap repo bootstrap
+
+The Brew tap lives in a separate repo (`FRIKKern/homebrew-tap`). To
+create it the first time:
+
+```sh
+# 1. create the tap repo
+gh repo create FRIKKern/homebrew-tap --public --description \
+  "Homebrew tap for noo-noo and friends" --confirm
+
+# 2. seed it with placeholder formulas (CI will overwrite on first release)
+TAP_DIR="$(mktemp -d)"
+gh repo clone FRIKKern/homebrew-tap "$TAP_DIR"
+cd "$TAP_DIR"
+mkdir -p Casks Formula
+cat > README.md <<'EOF'
+# FRIKKern/homebrew-tap
+
+Homebrew tap for noo-noo (https://github.com/FRIKKern/noo-noo).
+
+## Usage
+
+```sh
+brew tap FRIKKern/tap
+brew install noo-noo            # GUI app (Cask)
+brew install --formula \
+  FRIKKern/tap/noo-noo          # CLI only (Formula, headless servers)
+```
+EOF
+cat > Casks/noo-noo.rb <<'EOF'
+# placeholder; replaced by CI on first release.
+cask "noo-noo" do
+  version "0.0.0"
+  sha256 :no_check
+  url "https://example.com/noo-noo"
+  name "Noo-Noo (placeholder)"
+  desc "Awaiting first release"
+  homepage "https://github.com/FRIKKern/noo-noo"
+  app "Noo-Noo.app"
+end
+EOF
+cat > Formula/noo-noo.rb <<'EOF'
+class NooNoo < Formula
+  desc "Placeholder; awaiting first release"
+  homepage "https://github.com/FRIKKern/noo-noo"
+  url "https://example.com/noo-noo"
+  version "0.0.0"
+  sha256 :no_check
+  def install; end
+end
+EOF
+git add .
+git commit -m "chore: bootstrap tap structure"
+git push origin main
+
+# 3. create a fine-grained PAT for CI to push updates
+#    Settings → Developer settings → Personal access tokens
+#    → Fine-grained tokens → Generate new token
+#    Repository access: Only select repositories → FRIKKern/homebrew-tap
+#    Permissions: Contents -> Read and write
+#    Copy the token (starts with github_pat_...)
+
+# 4. add the PAT as a secret in the source repo
+gh secret set TAP_TOKEN --repo FRIKKern/noo-noo
+# (paste the PAT when prompted)
+```
+
+After these four steps, every `git push origin v*.*.*` from the source
+repo triggers `release.yml`, which builds artifacts, creates a GitHub
+Release, renders the Brew templates, and pushes them to
+`FRIKKern/homebrew-tap`.
