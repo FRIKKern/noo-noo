@@ -47,3 +47,31 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+func TestMenu_Badge_DownLabel(t *testing.T) {
+	m := Build(Status{Running: false}, nil)
+	if m.Items[0].Label != "Daemon: down" {
+		t.Errorf("down label = %q", m.Items[0].Label)
+	}
+}
+
+func TestMenu_Badge_IdleLabel(t *testing.T) {
+	m := Build(Status{Running: true, OpenSuggestions: 0}, nil)
+	if m.Items[0].Label != "Daemon: up · idle" {
+		t.Errorf("idle label = %q", m.Items[0].Label)
+	}
+}
+
+func TestMenu_Badge_SingularVsPlural(t *testing.T) {
+	cases := map[int]string{
+		1: "Daemon: up · 1 tip",
+		2: "Daemon: up · 2 tips",
+		7: "Daemon: up · 7 tips",
+	}
+	for n, want := range cases {
+		m := Build(Status{Running: true, OpenSuggestions: n}, nil)
+		if m.Items[0].Label != want {
+			t.Errorf("n=%d: label = %q, want %q", n, m.Items[0].Label, want)
+		}
+	}
+}

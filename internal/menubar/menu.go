@@ -37,16 +37,28 @@ type Suggestion struct {
 	SizeBytes int64
 }
 
+// badgeLabel renders the dropdown's first (disabled) row, summarising daemon
+// liveness and the open-suggestions count. Singular/plural is handled
+// explicitly so "1 tip" never reads "1 tips".
+func badgeLabel(st Status) string {
+	switch {
+	case !st.Running:
+		return "Daemon: down"
+	case st.OpenSuggestions == 0:
+		return "Daemon: up · idle"
+	case st.OpenSuggestions == 1:
+		return "Daemon: up · 1 tip"
+	default:
+		return fmt.Sprintf("Daemon: up · %d tips", st.OpenSuggestions)
+	}
+}
+
 // Build returns the menu structure for the given daemon state.
 // Suggestions submenu rendering is added in Task 57; this is the base layout.
 func Build(st Status, suggs []Suggestion) *Menu {
 	_ = suggs // submenu wiring lands in Task 57
-	statusLabel := "Daemon: down"
-	if st.Running {
-		statusLabel = fmt.Sprintf("Daemon: up · %d open", st.OpenSuggestions)
-	}
 	return &Menu{Items: []MenuItem{
-		{ID: "status", Label: statusLabel, Disabled: true},
+		{ID: "status", Label: badgeLabel(st), Disabled: true},
 		{Separator: true},
 		{ID: "scan-now", Label: "Run Scan Now", Disabled: !st.Running},
 		{ID: "settings", Label: "Open Settings…"},
