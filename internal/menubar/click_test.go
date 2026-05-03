@@ -1,24 +1,34 @@
 package menubar
 
-import "testing"
+import (
+	"sync"
+	"sync/atomic"
+	"testing"
+)
 
 type recHandler struct {
-	scanNow, openSettings, quit int
+	scanNow, openSettings, quit atomic.Int32
+	mu                          sync.Mutex
 	suggClicked                 []int
 }
 
-func (r *recHandler) OnScanNow()          { r.scanNow++ }
-func (r *recHandler) OnOpenSettings()     { r.openSettings++ }
-func (r *recHandler) OnQuit()             { r.quit++ }
-func (r *recHandler) OnSuggestion(id int) { r.suggClicked = append(r.suggClicked, id) }
+func (r *recHandler) OnScanNow()      { r.scanNow.Add(1) }
+func (r *recHandler) OnOpenSettings() { r.openSettings.Add(1) }
+func (r *recHandler) OnQuit()         { r.quit.Add(1) }
+func (r *recHandler) OnSuggestion(id int) {
+	r.mu.Lock()
+	r.suggClicked = append(r.suggClicked, id)
+	r.mu.Unlock()
+}
 
 func TestClick_RoutesByID(t *testing.T) {
 	h := &recHandler{}
 	Dispatch(h, "scan-now")
 	Dispatch(h, "settings")
 	Dispatch(h, "quit")
-	if h.scanNow != 1 || h.openSettings != 1 || h.quit != 1 {
-		t.Errorf("handler counts = %+v", h)
+	if h.scanNow.Load() != 1 || h.openSettings.Load() != 1 || h.quit.Load() != 1 {
+		t.Errorf("handler counts = scanNow:%d openSettings:%d quit:%d",
+			h.scanNow.Load(), h.openSettings.Load(), h.quit.Load())
 	}
 }
 
@@ -35,16 +45,17 @@ func TestClick_UnknownIDIsNoOp(t *testing.T) {
 	h := &recHandler{}
 	Dispatch(h, "status")        // disabled label, no callback
 	Dispatch(h, "something-new") // unknown
-	if h.scanNow+h.openSettings+h.quit+len(h.suggClicked) != 0 {
-		t.Errorf("unknown IDs should be no-ops, got %+v", h)
+	if h.scanNow.Load()+h.openSettings.Load()+h.quit.Load()+int32(len(h.suggClicked)) != 0 {
+		t.Errorf("unknown IDs should be no-ops, got scanNow:%d openSettings:%d quit:%d suggClicked:%v",
+			h.scanNow.Load(), h.openSettings.Load(), h.quit.Load(), h.suggClicked)
 	}
 }
 
 func TestClick_Trigger_OnScanNowFiresHandler(t *testing.T) {
 	h := &recHandler{}
 	Dispatch(h, "scan-now")
-	if h.scanNow != 1 {
-		t.Errorf("OnScanNow not invoked, got %+v", h)
+	if h.scanNow.Load() != 1 {
+		t.Errorf("OnScanNow not invoked, got scanNow:%d", h.scanNow.Load())
 	}
 }
 
@@ -59,7 +70,7 @@ func TestClick_Trigger_DispatchIsThreadSafe(t *testing.T) {
 	}
 	// recHandler isn't thread-safe; this just confirms Dispatch doesn't panic
 	// or hang under concurrent calls.
-	if h.scanNow == 0 {
+	if h.scanNow.Load() == 0 {
 		t.Error("no calls registered")
 	}
 }
