@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/frikkjarl/noo-noo/internal/core"
-	"github.com/frikkjarl/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
 // Module manages a fixed list of cache target directories.

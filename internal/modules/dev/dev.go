@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/frikkjarl/noo-noo/internal/core"
-	"github.com/frikkjarl/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
 // Targets is the set of directory basenames recognized as build artifacts.

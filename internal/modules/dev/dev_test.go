@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/frikkjarl/noo-noo/internal/core"
-	"github.com/frikkjarl/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
 func TestScanFindsArtifacts(t *testing.T) {

@@ -6,7 +6,7 @@ package modules
 import (
 	"context"
 
-	"github.com/frikkjarl/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/core"
 )
 
 // RiskLevel describes how confident we are that an action is safe.

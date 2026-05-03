@@ -71,7 +71,7 @@ We treat your filesystem as production data. The defaults reflect that:
 From source (until 0.4 ships the Brew tap):
 
 ```sh
-go install github.com/frikkjarl/noo-noo/cmd/noo-noo@v0.1.0
+go install github.com/FRIKKern/noo-noo/cmd/noo-noo@v0.1.0
 ```
 
 Then:
@@ -88,7 +88,7 @@ All destructive commands prompt for confirmation; pass `-y` to skip. `--dry-run`
 ## Develop
 
 ```sh
-git clone https://github.com/frikkjarl/noo-noo.git
+git clone https://github.com/FRIKKern/noo-noo.git
 cd noo-noo
 go test ./...
 ```

@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/frikkjarl/noo-noo/internal/cli"
+	"github.com/FRIKKern/noo-noo/internal/cli"
 )
 
 const version = "0.1.0"

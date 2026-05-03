@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frikkjarl/noo-noo/internal/audit"
-	"github.com/frikkjarl/noo-noo/internal/core"
-	"github.com/frikkjarl/noo-noo/internal/modules/caches"
+	"github.com/FRIKKern/noo-noo/internal/audit"
+	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/modules/caches"
 )
 
 func init() { Register("caches", cachesCmd) }

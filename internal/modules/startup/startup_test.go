@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frikkjarl/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
 func TestScanReportsConfiguredTargets(t *testing.T) {

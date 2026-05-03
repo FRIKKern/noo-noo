@@ -6,7 +6,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/frikkjarl/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
 // PrintReport writes a Report in either human-table or NDJSON form.

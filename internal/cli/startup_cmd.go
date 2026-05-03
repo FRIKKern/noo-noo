@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frikkjarl/noo-noo/internal/audit"
-	"github.com/frikkjarl/noo-noo/internal/modules"
-	"github.com/frikkjarl/noo-noo/internal/modules/startup"
+	"github.com/FRIKKern/noo-noo/internal/audit"
+	"github.com/FRIKKern/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/modules/startup"
 )
 
 func init() { Register("startup", startupCmd) }

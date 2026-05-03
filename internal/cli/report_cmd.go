@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frikkjarl/noo-noo/internal/core"
-	"github.com/frikkjarl/noo-noo/internal/modules"
-	"github.com/frikkjarl/noo-noo/internal/modules/caches"
-	"github.com/frikkjarl/noo-noo/internal/modules/dev"
-	"github.com/frikkjarl/noo-noo/internal/modules/startup"
+	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/modules"
+	"github.com/FRIKKern/noo-noo/internal/modules/caches"
+	"github.com/FRIKKern/noo-noo/internal/modules/dev"
+	"github.com/FRIKKern/noo-noo/internal/modules/startup"
 )
 
 func init() { Register("report", reportCmd) }
