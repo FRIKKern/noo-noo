@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	toml "github.com/pelletier/go-toml/v2"
+
 	"github.com/FRIKKern/noo-noo/internal/config"
 )
 
@@ -41,4 +43,25 @@ func (b *Bindings) OpenConfigInEditor() error {
 		}
 	}
 	return exec.Command("open", "-t", b.configPath).Start()
+}
+
+// SaveConfig writes cfg to b.configPath atomically (write-then-rename).
+// Returns the marshalling or fs error verbatim so the Svelte side can show it.
+func (b *Bindings) SaveConfig(cfg config.Config) error {
+	body, err := toml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(b.configPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	tmp := b.configPath + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := os.Rename(tmp, b.configPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }

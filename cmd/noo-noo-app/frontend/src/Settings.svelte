@@ -67,6 +67,11 @@
 
     <footer>
       <button onclick={onSave} disabled={saving}>{saving ? 'Saving…' : saved ? 'Saved' : 'Save'}</button>
+      {#if saved}
+        <p style="color:#6e6e73;font-size:.85rem">
+          Saved. Daemon picks up new values on next restart (Phase 0.3.1 will hot-reload).
+        </p>
+      {/if}
     </footer>
   {/if}
 </main>
