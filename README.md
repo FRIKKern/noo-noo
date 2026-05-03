@@ -91,29 +91,52 @@ We treat your filesystem as production data. The defaults reflect that:
 
 ## Install
 
-From source (until 0.4 ships the Brew tap):
+### Quick install (recommended)
 
 ```sh
-git clone https://github.com/FRIKKern/noo-noo.git && cd noo-noo
-go install ./cmd/noo-noo ./cmd/noo-nood
-
-# Install the daemon under launchd. Writes
-# ~/Library/LaunchAgents/io.noo-noo.d.plist and bootstraps it via
-# launchctl, so noo-nood auto-starts at login and survives reboots.
-noo-noo install
+brew tap FRIKKern/tap
+brew install noo-noo
+open -a Noo-Noo
 ```
 
-Uninstall with `noo-noo uninstall` (removes the LaunchAgent; leaves the SQLite store in place).
+This installs both `Noo-Noo.app` (in `/Applications`) and the `noo-noo`
++ `noo-nood` CLI binaries (in `/opt/homebrew/bin`). The Brew Cask
+postflight hook automatically registers the LaunchAgent so the daemon
+runs in the background.
 
-### Menubar app (v0.3, ad-hoc signed)
+**Gatekeeper note:** noo-noo is currently ad-hoc signed (Apple
+Developer ID + notarization land in 0.4.1). The first time you launch
+`Noo-Noo.app`, macOS will block it. To allow it: right-click
+`/Applications/Noo-Noo.app`, choose "Open", and click "Open" in the
+confirmation dialog. macOS will remember this choice.
+
+### Headless install (CLI only, e.g. CI Mac mini)
 
 ```sh
-make app-package                       # builds build/Noo-Noo.app + ad-hoc signs
+brew install --formula FRIKKern/tap/noo-noo
+brew services start noo-noo
+```
+
+### Build from source
+
+```sh
+git clone https://github.com/FRIKKern/noo-noo.git
+cd noo-noo
+make app-package
 cp -R build/Noo-Noo.app /Applications/
-open /Applications/Noo-Noo.app         # menubar icon appears; no dock icon
+open /Applications/Noo-Noo.app
 ```
 
-First launch: Right-click > Open to bypass Gatekeeper (the bundle is ad-hoc signed; notarization arrives in 0.4). The daemon must be running (`noo-noo install` then `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/io.noo-noo.d.plist`).
+### Direct download
+
+Pre-built artifacts are attached to every
+[GitHub Release](https://github.com/FRIKKern/noo-noo/releases):
+
+- `Noo-Noo-vX.Y.Z.dmg` — drag-install disk image
+- `Noo-Noo.app.zip` — bare app bundle
+- `noo-noo`, `noo-nood` — universal Mach-O CLI binaries
+- `noo-noo-vX.Y.Z-darwin.tar.gz` — both CLIs in a tarball
+- `checksums.txt` — SHA-256 manifest, verify with `shasum -c`
 
 ## Usage
 
