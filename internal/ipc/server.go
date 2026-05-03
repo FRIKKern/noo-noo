@@ -49,22 +49,12 @@ type CleanService struct {
 	Now func() time.Time
 }
 
-// DaemonService is the receiver registered as "Daemon". The Status method is
-// defined here so the IPC foundation is end-to-end exercisable; task 39 may
-// extend it with config-aware fields.
+// DaemonService is the receiver registered as "Daemon". Its Status method
+// lives in daemon_method.go to mirror the per-namespace file split used by
+// Report, Suggestions, and Clean.
 type DaemonService struct {
 	StartedAt func() time.Time
 	Version   string
-}
-
-// Status returns daemon liveness information. Implements Daemon.Status.
-func (d *DaemonService) Status(_ StatusRequest, reply *StatusResponse) error {
-	reply.Running = true
-	reply.Version = d.Version
-	if d.StartedAt != nil {
-		reply.Uptime = time.Since(d.StartedAt())
-	}
-	return nil
 }
 
 // Server listens on a Unix socket and dispatches JSON-RPC requests.
