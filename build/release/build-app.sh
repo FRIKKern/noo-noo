@@ -62,9 +62,14 @@ mkdir -p "${MACOS}" "${RES}"
 
 cp "${DIST}/noo-noo-app" "${MACOS}/Noo-Noo"
 chmod +x "${MACOS}/Noo-Noo"
-# bundle the CLI binaries inside the app for the postflight installer
-cp "${DIST}/noo-noo" "${MACOS}/noo-noo"
-cp "${DIST}/noo-nood" "${MACOS}/noo-nood"
+# Bundle the CLI binaries inside the app for the postflight installer.
+# They live in Contents/Resources/bin/ rather than Contents/MacOS/ to
+# avoid a case-insensitive HFS+/APFS collision with MacOS/Noo-Noo
+# (where "Noo-Noo" and "noo-noo" map to the same inode).
+mkdir -p "${RES}/bin"
+cp "${DIST}/noo-noo" "${RES}/bin/noo-noo"
+cp "${DIST}/noo-nood" "${RES}/bin/noo-nood"
+chmod +x "${RES}/bin/noo-noo" "${RES}/bin/noo-nood"
 cp cmd/noo-noo-app/build/appicon.png "${RES}/appicon.png"
 
 echo "==> rendering Info.plist"

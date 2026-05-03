@@ -10,11 +10,11 @@ cask "noo-noo" do
   depends_on macos: ":big_sur"
 
   app "Noo-Noo.app"
-  binary "#{appdir}/Noo-Noo.app/Contents/MacOS/noo-noo", target: "noo-noo"
-  binary "#{appdir}/Noo-Noo.app/Contents/MacOS/noo-nood", target: "noo-nood"
+  binary "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-noo", target: "noo-noo"
+  binary "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-nood", target: "noo-nood"
 
   postflight do
-    system_command "#{appdir}/Noo-Noo.app/Contents/MacOS/noo-noo",
+    system_command "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-noo",
                    args: ["install"],
                    sudo: false
   end
