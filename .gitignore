@@ -29,3 +29,5 @@ npm-debug.log*
 *.db-journal
 .env
 .env.local
+.verify-blocked
+verification-results/
