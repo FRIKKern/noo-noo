@@ -36,6 +36,9 @@ func buildApp(_ buildOpts) *application.App {
 		Mac: application.MacOptions{
 			ActivationPolicy: application.ActivationPolicyAccessory, // == LSUIElement
 		},
+		// Services exposes Bindings methods to the Settings webview JS.
+		// Real GetConfig / SaveConfig methods are appended in tasks 62-63.
+		Services: []application.Service{application.NewService(&Bindings{})},
 	})
 }
 
