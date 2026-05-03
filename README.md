@@ -2,6 +2,7 @@
 
 > A lightweight, smart, opt-in cleanup daemon for Mac developers — inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner.
 
+[![CI](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml/badge.svg)](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go: 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://go.dev)
