@@ -441,24 +441,27 @@ case "$TASK" in
     ;;
 
   36)
+    # server.go in allowlist: ReportService struct gets its data-dep field here.
     require_commit_prefix "feat(ipc):"
-    require_files_changed "internal/ipc/report_method.go" "internal/ipc/report_method_test.go"
+    require_files_changed "internal/ipc/report_method.go" "internal/ipc/report_method_test.go" "internal/ipc/server.go"
     require_test "./internal/ipc/" "TestReport"
     require_cmd "make lint" "make lint"
     pass
     ;;
 
   37)
+    # server.go in allowlist: SuggestionsService struct gets its data-dep field here.
     require_commit_prefix "feat(ipc):"
-    require_files_changed "internal/ipc/suggestions_method.go" "internal/ipc/suggestions_method_test.go"
+    require_files_changed "internal/ipc/suggestions_method.go" "internal/ipc/suggestions_method_test.go" "internal/ipc/server.go"
     require_test "./internal/ipc/" "TestSuggestions"
     require_cmd "make lint" "make lint"
     pass
     ;;
 
   38)
+    # server.go in allowlist: CleanService struct gets its data-dep field here.
     require_commit_prefix "feat(ipc):"
-    require_files_changed "internal/ipc/clean_method.go" "internal/ipc/clean_method_test.go"
+    require_files_changed "internal/ipc/clean_method.go" "internal/ipc/clean_method_test.go" "internal/ipc/server.go"
     require_test "./internal/ipc/" "TestClean"
     require_cmd "make lint" "make lint"
     pass
