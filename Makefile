@@ -48,11 +48,16 @@ app-dev:
 app-package: app
 	rm -rf $(APP_OUT)
 	mkdir -p $(APP_OUT)/Contents/MacOS $(APP_OUT)/Contents/Resources
-	# Render Info.plist with version substitution.
+	# Render Info.plist with version substitution. Verify LSUIElement
+	# survived the substitution so the bundle is genuinely menubar-only.
 	sed "s/{{.Version}}/$(APP_VERSION)/g" cmd/noo-noo-app/Info.plist.tmpl \
 		> $(APP_OUT)/Contents/Info.plist
+	@grep -q LSUIElement $(APP_OUT)/Contents/Info.plist \
+		|| { echo "FATAL: LSUIElement missing from rendered Info.plist"; exit 1; }
 	cp build/noo-noo-app $(APP_OUT)/Contents/MacOS/noo-noo-app
 	cp cmd/noo-noo-app/build/appicon.png $(APP_OUT)/Contents/Resources/appicon.png
 	# Ad-hoc sign so Gatekeeper accepts the bundle on the build machine.
+	# This is NOT a notarized signature (Phase 0.4); first-launch will
+	# require Right-click > Open to bypass Gatekeeper.
 	codesign --force --deep --sign - $(APP_OUT)
 	@echo "Built $(APP_OUT) (version: $(APP_VERSION))"
