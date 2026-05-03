@@ -9,8 +9,8 @@ import (
 // Safety enforces that destructive filesystem operations only target paths
 // inside an allowlist of root prefixes and outside a hard blocklist.
 type Safety struct {
-	roots    []string // absolute, cleaned
-	blocked  []string // basename or path fragment to block (e.g. ".git", ".env")
+	roots   []string // absolute, cleaned
+	blocked []string // basename or path fragment to block (e.g. ".git", ".env")
 }
 
 // NewSafety constructs a Safety from a list of root prefixes that destructive

@@ -111,8 +111,6 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 }
 
 func dirMtime(path string) (time.Time, error) {
-	info, err := filepath.Abs(path)
-	_ = info
 	stat, err := osStat(path)
 	if err != nil {
 		return time.Time{}, err
