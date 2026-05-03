@@ -53,6 +53,14 @@ func (c *Client) SuggestionsDismiss(id int64) error {
 	return c.rpc.Call("Suggestions.Dismiss", DismissRequest{ID: id}, &resp)
 }
 
+// TriggerScan calls Daemon.TriggerScan to request an immediate heuristic
+// scan instead of waiting for the daily scheduler tick.
+func (c *Client) TriggerScan() (TriggerScanReply, error) {
+	var resp TriggerScanReply
+	err := c.rpc.Call("Daemon.TriggerScan", TriggerScanArgs{}, &resp)
+	return resp, err
+}
+
 // CleanExecute calls Clean.Execute with the supplied targets.
 func (c *Client) CleanExecute(targets []CleanTarget) (CleanResponse, error) {
 	var resp CleanResponse

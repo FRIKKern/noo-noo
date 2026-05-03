@@ -11,14 +11,21 @@ import (
 )
 
 type fakeStatusClient struct {
-	resp   ipc.StatusResponse
-	err    error
-	called bool
+	resp        ipc.StatusResponse
+	err         error
+	called      bool
+	triggerResp ipc.TriggerScanReply
+	triggerErr  error
+	triggerHit  bool
 }
 
 func (f *fakeStatusClient) DaemonStatus() (ipc.StatusResponse, error) {
 	f.called = true
 	return f.resp, f.err
+}
+func (f *fakeStatusClient) TriggerScan() (ipc.TriggerScanReply, error) {
+	f.triggerHit = true
+	return f.triggerResp, f.triggerErr
 }
 func (f *fakeStatusClient) Close() error { return nil }
 
@@ -86,4 +93,25 @@ func TestDaemonCmdStatusReportsDown(t *testing.T) {
 	if err == nil {
 		t.Error("expected status error when daemon is down")
 	}
+}
+
+func TestDaemonCmdForceScanCallsTrigger(t *testing.T) {
+	fc := &fakeStatusClient{
+		triggerResp: ipc.TriggerScanReply{Ok: true, SuggestionsAdded: 3, DurationMs: 42},
+	}
+	out := &bytes.Buffer{}
+	cmd := newDaemonCmd(daemonOpts{
+		Dial: func() (statusClient, error) { return fc, nil },
+		Out:  out,
+	})
+	if err := cmd.Run([]string{"force-scan"}); err != nil {
+		t.Fatalf("Run force-scan: %v", err)
+	}
+	if !fc.triggerHit {
+		t.Error("expected TriggerScan to be called")
+	}
+	if !strings.Contains(out.String(), "suggestions_added=3") {
+		t.Errorf("output missing 'suggestions_added=3': %s", out.String())
+	}
+	_ = time.Now() // keep "time" import
 }

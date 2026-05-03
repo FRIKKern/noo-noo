@@ -27,6 +27,7 @@ func (daemonExecRunner) Run(name string, args ...string) ([]byte, error) {
 
 type statusClient interface {
 	DaemonStatus() (ipc.StatusResponse, error)
+	TriggerScan() (ipc.TriggerScanReply, error)
 	Close() error
 }
 
@@ -73,7 +74,7 @@ func daemonEntry(_ context.Context, app *App, args []string) int {
 
 func (d *daemonCmd) Run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: noo-noo daemon [start|stop|status]")
+		return fmt.Errorf("usage: noo-noo daemon [start|stop|status|force-scan]")
 	}
 	switch args[0] {
 	case "start":
@@ -102,6 +103,20 @@ func (d *daemonCmd) Run(args []string) error {
 		}
 		_, _ = fmt.Fprintf(d.opts.Out, "noo-nood: running=%t version=%s uptime=%s\n",
 			s.Running, s.Version, s.Uptime)
+		return nil
+	case "force-scan":
+		c, err := d.opts.Dial()
+		if err != nil {
+			return fmt.Errorf("daemon not reachable: %w", err)
+		}
+		defer func() { _ = c.Close() }()
+		reply, err := c.TriggerScan()
+		if err != nil {
+			return fmt.Errorf("trigger scan: %w", err)
+		}
+		_, _ = fmt.Fprintf(d.opts.Out,
+			"Scan triggered. ok=%t suggestions_added=%d duration_ms=%d\n",
+			reply.Ok, reply.SuggestionsAdded, reply.DurationMs)
 		return nil
 	default:
 		return fmt.Errorf("unknown subcommand %q", args[0])
