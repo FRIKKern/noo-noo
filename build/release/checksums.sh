@@ -38,5 +38,12 @@ done
 # stable order
 sort -k 2 -o "${OUT}" "${OUT}"
 
+# T79: refuse to write an empty manifest -- if the glob caught nothing,
+# something upstream is broken and the release would ship without checksums.
+if [[ ! -s "${OUT}" ]]; then
+    echo "ERROR: ${OUT} is empty; no release artifacts found in ${DIST}" >&2
+    exit 1
+fi
+
 echo "==> done"
 cat "${OUT}"

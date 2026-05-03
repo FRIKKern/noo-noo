@@ -25,7 +25,18 @@ MACOS="${CONTENTS}/MacOS"
 RES="${CONTENTS}/Resources"
 
 echo "==> building Wails app binary"
-(cd cmd/noo-noo-app/frontend && npm run build)
+# T79: ensure frontend deps are installed before vite build (CI/clean checkouts
+# won't have node_modules from a prior dev run). Prefer reproducible `npm ci`
+# when a lockfile exists; fall back to `npm install` otherwise.
+(
+    cd cmd/noo-noo-app/frontend
+    if [[ -f package-lock.json ]]; then
+        npm ci
+    else
+        npm install --no-audit --no-fund
+    fi
+    npm run build
+)
 GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 \
     go build -trimpath -tags production \
         -ldflags="-s -w -X main.version=${VERSION}" \

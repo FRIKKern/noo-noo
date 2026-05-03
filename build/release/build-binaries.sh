@@ -14,6 +14,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 VERSION="${VERSION:-vDEV}"
 DIST="${ROOT}/dist"
+# T79: dist/ is created by scripts/release.sh too, but `mkdir -p` makes this
+# script safe to invoke standalone (e.g. for a quick CLI-only rebuild).
 mkdir -p "${DIST}"
 
 LDFLAGS="-s -w -X main.version=${VERSION}"

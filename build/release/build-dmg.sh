@@ -21,6 +21,13 @@ if [[ ! -d "${APP}" ]]; then
     exit 1
 fi
 
+# T79: detach any stale Noo-Noo volume from a previous failed run so
+# `hdiutil create` doesn't trip "resource busy".
+for vol in /Volumes/Noo-Noo*; do
+    [[ -d "$vol" ]] || continue
+    hdiutil detach -force "$vol" >/dev/null 2>&1 || true
+done
+
 echo "==> staging"
 STAGE="$(mktemp -d -t noo-noo-dmg)"
 trap 'rm -rf "${STAGE}"' EXIT
