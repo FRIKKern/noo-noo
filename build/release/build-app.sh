@@ -14,6 +14,11 @@
 #   dist/Noo-Noo.app.zip           ditto-compressed for upload
 set -euo pipefail
 
+# Pin deployment target so Wails v3 alpha (which compiles native objects
+# targeting the SDK SDK version) doesn't trigger linker version warnings
+# against Go's default. 11.0 = Big Sur, the oldest macOS we support.
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 VERSION="${VERSION:-vDEV}"
