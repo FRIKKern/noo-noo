@@ -12,10 +12,16 @@ import (
 const cleanModule = "ipc.clean"
 
 // Execute records one audit-log entry per target and returns a summary of
-// bytes "freed". In Phase 0.2 the daemon does not perform the deletes itself
-// (the user runs `noo-noo dev clean` from Phase 0.1); Execute records that
-// the user accepted a suggestion. Phase 0.5 will introduce auto-clean and
-// this method will then dispatch to the relevant heuristic module.
+// bytes "freed". The daemon does NOT perform the deletes itself today —
+// the user runs `noo-noo dev clean` (Phase 0.1) or accepts a suggestion
+// from the menubar app (which then shells out). Execute records that the
+// acceptance happened; the actual rm lives in the module CLI handlers
+// where the safety guard lives.
+//
+// Real in-daemon dispatch is gated behind opt-in auto-clean (Phase 0.5
+// scope) so that "the daemon deletes things on its own" is never the
+// default behavior. Until then, BytesFreed reflects requested, not
+// actually-freed, sizes.
 //
 // The audit row's Outcome field distinguishes a real acceptance ("accepted")
 // from a dry-run preview ("dry-run") so reports can filter accordingly.
