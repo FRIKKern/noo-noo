@@ -10,7 +10,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/cli"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-v") {

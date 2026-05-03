@@ -1,10 +1,15 @@
-.PHONY: build test lint fmt clean install
+.PHONY: build build-cli build-daemon test lint fmt clean install
 
 BINARY := noo-noo
 PKG    := ./cmd/noo-noo
 
-build:
-	go build -trimpath -ldflags="-s -w" -o bin/$(BINARY) $(PKG)
+build: build-cli build-daemon
+
+build-cli:
+	go build -trimpath -ldflags="-s -w" -o bin/noo-noo ./cmd/noo-noo
+
+build-daemon:
+	go build -trimpath -ldflags="-s -w" -o bin/noo-nood ./cmd/noo-nood
 
 test:
 	go test -race ./...
