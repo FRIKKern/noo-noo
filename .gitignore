@@ -18,6 +18,8 @@ build/
 frontend/dist/
 frontend/node_modules/
 frontend/.svelte-kit/
+cmd/noo-noo-app/frontend/dist/
+cmd/noo-noo-app/frontend/node_modules/
 
 # Node
 node_modules/
