@@ -1,11 +1,24 @@
-# noo-noo
-
-> A lightweight, smart, opt-in cleanup daemon for Mac developers — inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner.
+# noo-noo — v0.4.0 (brew installable)
 
 [![CI](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml/badge.svg)](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml)
-[![Status: v0.3](https://img.shields.io/badge/status-v0.3-blue.svg)](#status)
+[![Release](https://img.shields.io/github/v/release/FRIKKern/noo-noo)](https://github.com/FRIKKern/noo-noo/releases)
+[![Brew Tap](https://img.shields.io/badge/brew-FRIKKern%2Ftap%2Fnoo--noo-orange)](https://github.com/FRIKKern/homebrew-tap)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go: 1.23+](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://go.dev)
+
+Smart cleanup for Mac developers. Universal Mach-O binaries (amd64 + arm64), menubar app + CLI, installable in one line:
+
+```sh
+brew install FRIKKern/tap/noo-noo
+```
+
+> Inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner. `noo-noo` watches your Mac for the sneaky stuff that piles up while you work — abandoned `node_modules`, runaway caches, idle iOS simulators, dead launchd agents — and quietly suggests cleanups when (and only when) the data says you'll get something back. Nothing destructive runs without your explicit approval.
+
+## What's new in 0.4
+
+- **`brew install` works.** GitHub Actions builds and ships universal binaries on every tag push; the [Homebrew tap](https://github.com/FRIKKern/homebrew-tap) at `FRIKKern/homebrew-tap` picks up the new version automatically.
+- **`Noo-Noo-vX.Y.Z.dmg`** — drag-install disk image attached to every GitHub Release, ad-hoc signed (right-click → Open on first launch).
+- **`CHANGELOG.md`** — per-version history in keep-a-changelog format, used as the release-notes source.
+- **`scripts/release.sh --dry-run`** — local smoke test of the release pipeline without pushing anything.
 
 `noo-noo` watches your Mac for the sneaky stuff that piles up while you work — abandoned `node_modules`, runaway caches, idle iOS simulators, dead launchd agents — and quietly suggests cleanups when (and only when) the data says you'll get something back. Nothing destructive runs without your explicit approval.
 
