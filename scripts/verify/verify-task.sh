@@ -315,7 +315,210 @@ case "$TASK" in
     pass
     ;;
 
+  21)
+    # Self-verifying: only syntax-check the verifier (running it on its own
+    # commit would recurse oddly).
+    require_commit_prefix "chore(verify):"
+    require_files_changed "scripts/verify/verify-task.sh"
+    require_cmd "bash -n scripts/verify/verify-task.sh" "bash -n scripts/verify/verify-task.sh"
+    pass
+    ;;
+
+  22)
+    require_commit_prefix "chore(deps):"
+    require_files_changed "go.mod" "go.sum"
+    require_cmd "go mod tidy && git diff --quiet -- go.mod go.sum" "go mod tidy clean (no diff)"
+    require_cmd "go build ./..." "go build ./..."
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  23)
+    require_commit_prefix "feat(config):"
+    require_files_changed "internal/config/config.go" "internal/config/config_test.go"
+    require_test_pkg "./internal/config/"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  24)
+    require_commit_prefix "feat(store):"
+    require_files_changed "internal/store/store.go" "internal/store/store_test.go" "internal/store/schema.sql"
+    require_test "./internal/store/" "TestOpen"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  25)
+    require_commit_prefix "feat(store):"
+    require_files_changed "internal/store/cache_history.go" "internal/store/cache_history_test.go"
+    require_test "./internal/store/" "TestCacheHistory"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  26)
+    require_commit_prefix "feat(store):"
+    require_files_changed "internal/store/idleness.go" "internal/store/idleness_test.go"
+    require_test "./internal/store/" "TestIdleness"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  27)
+    require_commit_prefix "feat(store):"
+    require_files_changed "internal/store/actions.go" "internal/store/actions_test.go" "internal/store/suggestions.go" "internal/store/suggestions_test.go"
+    require_test "./internal/store/" "TestActions|TestSuggestions"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  28)
+    require_commit_prefix "feat(metrics):"
+    require_files_changed "internal/metrics/vmstat.go" "internal/metrics/vmstat_test.go" "internal/metrics/testdata/vm_stat_fixture.txt"
+    require_test "./internal/metrics/" "TestVMStat"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  29)
+    require_commit_prefix "feat(metrics):"
+    require_files_changed "internal/metrics/sysctl.go" "internal/metrics/sysctl_test.go"
+    require_test "./internal/metrics/" "TestSysctl|TestLoadAvg"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  30)
+    require_commit_prefix "feat(heuristics):"
+    require_files_changed "internal/heuristics/types.go" "internal/heuristics/idle_repos.go" "internal/heuristics/idle_repos_test.go"
+    require_test "./internal/heuristics/" "TestIdleRepos"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  31)
+    require_commit_prefix "feat(heuristics):"
+    require_files_changed "internal/heuristics/cache_velocity.go" "internal/heuristics/cache_velocity_test.go"
+    require_test "./internal/heuristics/" "TestCacheVelocity"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  32)
+    require_commit_prefix "feat(notify):"
+    require_files_changed "internal/notify/notify.go" "internal/notify/notify_test.go"
+    require_test_pkg "./internal/notify/"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  33)
+    require_commit_prefix "feat(launchd):"
+    require_files_changed "internal/launchd/plist.go" "internal/launchd/plist_test.go" "internal/launchd/testdata/golden.plist"
+    require_test "./internal/launchd/" "TestPlist"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  34)
+    require_commit_prefix "feat(launchd):"
+    require_files_changed "internal/launchd/install.go" "internal/launchd/install_test.go"
+    require_test "./internal/launchd/" "TestInstall"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  35)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/protocol.go" "internal/ipc/server.go" "internal/ipc/client.go" "internal/ipc/server_test.go" "internal/ipc/client_test.go"
+    require_test "./internal/ipc/" "TestServer|TestClient"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  36)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/report_method.go" "internal/ipc/report_method_test.go"
+    require_test "./internal/ipc/" "TestReport"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  37)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/suggestions_method.go" "internal/ipc/suggestions_method_test.go"
+    require_test "./internal/ipc/" "TestSuggestions"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  38)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/clean_method.go" "internal/ipc/clean_method_test.go"
+    require_test "./internal/ipc/" "TestClean"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  39)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/daemon_method.go" "internal/ipc/daemon_method_test.go"
+    require_test "./internal/ipc/" "TestDaemonStatus"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  40)
+    require_commit_prefix "feat(daemon):"
+    require_files_changed "cmd/noo-nood/main.go" "cmd/noo-nood/main_test.go"
+    require_build "./cmd/noo-nood/"
+    require_test_pkg "./cmd/noo-nood/"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  41)
+    require_commit_prefix "feat(cli):"
+    require_files_changed "internal/cli/daemon_cmd.go" "internal/cli/daemon_cmd_test.go"
+    require_test "./internal/cli/" "TestDaemonCmd"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  42)
+    require_commit_prefix "feat(cli):"
+    require_files_changed "internal/cli/suggestions_cmd.go" "internal/cli/suggestions_cmd_test.go"
+    require_test "./internal/cli/" "TestSuggestionsCmd"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  43)
+    require_commit_prefix "feat(cli):"
+    require_files_changed "internal/cli/install_cmd.go" "internal/cli/install_cmd_test.go"
+    require_test "./internal/cli/" "TestInstallCmd"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  44)
+    require_commit_prefix "test(e2e):"
+    require_files_changed "cmd/noo-nood/e2e_test.go"
+    require_test "./cmd/noo-nood/" "TestEndToEnd"
+    require_cmd "make test" "make test (full suite)"
+    require_cmd "make lint" "make lint"
+    pass
+    ;;
+
+  45)
+    require_commit_prefix "docs:"
+    require_files_changed "README.md"
+    require_cmd "git tag --list | grep -q '^v0.2.0$'" "v0.2.0 tag exists"
+    pass
+    ;;
+
   *)
-    fail "unknown task id $TASK (valid: 1-20)"
+    fail "unknown task id $TASK (valid: 1-45)"
     ;;
 esac
