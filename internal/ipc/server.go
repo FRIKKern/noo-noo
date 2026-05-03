@@ -31,9 +31,12 @@ type ReportService struct {
 	Store *store.Store
 }
 
-// SuggestionsService is the receiver registered as "Suggestions". Tasks 37+
-// attach List/Dismiss on this type in a sibling file.
-type SuggestionsService struct{}
+// SuggestionsService is the receiver registered as "Suggestions". The List
+// and Dismiss methods (in suggestions_method.go) read and update the
+// suggestions table via Store.
+type SuggestionsService struct {
+	Store *store.Store
+}
 
 // CleanService is the receiver registered as "Clean". Task 38 attaches the
 // Execute method on this type in a sibling file.
