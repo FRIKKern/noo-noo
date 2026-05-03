@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/FRIKKern/noo-noo/internal/store"
 )
 
 // Handlers bundles the four service objects registered on the RPC server. Any
@@ -23,8 +25,11 @@ type Handlers struct {
 }
 
 // ReportService is the receiver registered as "Report" on the RPC server.
-// Tasks 36+ attach the Full method on this type in a sibling file.
-type ReportService struct{}
+// The Full method (in report_method.go) reads from Store to assemble the
+// snapshot returned to `noo-noo report`.
+type ReportService struct {
+	Store *store.Store
+}
 
 // SuggestionsService is the receiver registered as "Suggestions". Tasks 37+
 // attach List/Dismiss on this type in a sibling file.
