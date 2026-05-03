@@ -19,6 +19,31 @@ type Config struct {
 	Heuristics HeuristicsCfg `toml:"heuristics"`
 	Notify     NotifyCfg     `toml:"notify"`
 	Scan       ScanCfg       `toml:"scan"`
+	Pressure   PressureCfg   `toml:"pressure"`
+	AutoClean  AutoCleanCfg  `toml:"auto_clean"`
+}
+
+// PressureCfg controls the real-time pressure watcher (Phase 0.5). Sampling
+// happens every SampleIntervalSeconds; a trigger fires only after sustained
+// breach for DebounceSeconds. Memory is "high" if used/total >= MemHighRatio;
+// disk is "high" if free space (GB) <= DiskLowGB.
+type PressureCfg struct {
+	SampleIntervalSeconds int     `toml:"sample_interval_seconds"`
+	DebounceSeconds       int     `toml:"debounce_seconds"`
+	MemHighRatio          float64 `toml:"mem_high_ratio"`
+	DiskLowGB             int     `toml:"disk_low_gb"`
+}
+
+// AutoCleanCfg controls the opt-in cleanup engine (Phase 0.5).
+// Default-disabled. First enable requires the CLI to set RiskAcknowledgedAt;
+// the daemon refuses to act if Enabled=true but RiskAcknowledgedAt is empty.
+type AutoCleanCfg struct {
+	Enabled            bool     `toml:"enabled"`
+	ModulesAllowed     []string `toml:"modules_allowed"`
+	MinIdleDays        int      `toml:"min_idle_days"`
+	MinSizeMB          int      `toml:"min_size_mb"`
+	SizeCapPerTickGB   int      `toml:"size_cap_per_tick_gb"`
+	RiskAcknowledgedAt string   `toml:"risk_acknowledged_at"`
 }
 
 type DaemonCfg struct {
@@ -80,6 +105,20 @@ func Defaults() Config {
 		},
 		Scan: ScanCfg{
 			Roots: []string{filepath.Join(home, "Documents", "GitHub")},
+		},
+		Pressure: PressureCfg{
+			SampleIntervalSeconds: 15,
+			DebounceSeconds:       60,
+			MemHighRatio:          0.85,
+			DiskLowGB:             10,
+		},
+		AutoClean: AutoCleanCfg{
+			Enabled:          false,
+			ModulesAllowed:   []string{"dev"},
+			MinIdleDays:      90,
+			MinSizeMB:        1024,
+			SizeCapPerTickGB: 10,
+			// RiskAcknowledgedAt deliberately empty; CLI sets on first enable.
 		},
 	}
 }
