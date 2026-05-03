@@ -75,3 +75,41 @@ func TestMenu_Badge_SingularVsPlural(t *testing.T) {
 		}
 	}
 }
+
+func TestMenu_Submenu_RendersTopThree(t *testing.T) {
+	suggs := []Suggestion{
+		{ID: 17, Module: "dev", Reason: "3 idle repos", SizeBytes: 4_200_000_000, Severity: "medium"},
+		{ID: 18, Module: "caches", Reason: "yarn cache", SizeBytes: 1_100_000_000, Severity: "low"},
+		{ID: 19, Module: "caches", Reason: "pnpm cache", SizeBytes: 800_000_000, Severity: "low"},
+		{ID: 20, Module: "caches", Reason: "npm cache", SizeBytes: 250_000_000, Severity: "low"},
+	}
+	m := Build(Status{Running: true, OpenSuggestions: 4}, suggs)
+	var sub *Menu
+	for _, it := range m.Items {
+		if it.ID == "suggestions" {
+			sub = it.Submenu
+		}
+	}
+	if sub == nil {
+		t.Fatal("suggestions submenu missing")
+	}
+	// 3 inline suggestions + 1 "see all" trailer = 4 items.
+	if len(sub.Items) != 4 {
+		t.Fatalf("submenu items = %d, want 4", len(sub.Items))
+	}
+	if sub.Items[0].ID != "sugg-17" {
+		t.Errorf("first sub item ID = %q, want sugg-17", sub.Items[0].ID)
+	}
+	if sub.Items[3].ID != "see-all" {
+		t.Errorf("trailer ID = %q, want see-all", sub.Items[3].ID)
+	}
+}
+
+func TestMenu_Submenu_HiddenWhenEmpty(t *testing.T) {
+	m := Build(Status{Running: true, OpenSuggestions: 0}, nil)
+	for _, it := range m.Items {
+		if it.ID == "suggestions" {
+			t.Error("suggestions item should be hidden when none open")
+		}
+	}
+}
