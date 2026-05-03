@@ -1,0 +1,31 @@
+# Go
+*.exe
+*.test
+*.prof
+*.out
+/bin/
+/dist/
+
+# Wails (added in v0.3)
+build/
+frontend/dist/
+frontend/node_modules/
+frontend/.svelte-kit/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# Local dev artifacts
+*.db
+*.db-journal
+.env
+.env.local
