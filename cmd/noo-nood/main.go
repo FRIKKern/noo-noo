@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/FRIKKern/noo-noo/internal/autoclean"
 	"github.com/FRIKKern/noo-noo/internal/config"
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
 	"github.com/FRIKKern/noo-noo/internal/ipc"
@@ -94,6 +95,11 @@ type Daemon struct {
 	store   *store.Store
 	started time.Time
 	now     func() time.Time // injectable for tests
+	// autoCleanCfg is a live mutable snapshot of cfg.AutoClean handed to
+	// the IPC AutoCleanService. Toggle mutates this in place so the next
+	// tick observes the change without a config reload. Nil-safe: tick.go
+	// falls back to cfg.AutoClean when this is nil (legacy test path).
+	autoCleanCfg *ipc.AutoCleanConfig
 }
 
 // newDaemon retains the lowercase constructor name so existing tests
@@ -102,11 +108,48 @@ func newDaemon(cfg config.Config, st *store.Store) *Daemon {
 	return &Daemon{cfg: cfg, store: st, now: time.Now}
 }
 
+// autoCleanConfigFromCfg snapshots the loaded TOML [auto_clean] section
+// into the IPC service's struct. The two are intentionally distinct
+// types (config.AutoCleanCfg lives in internal/config; ipc.AutoCleanConfig
+// is re-declared in internal/ipc to avoid an import cycle); this adapter
+// is the single conversion point.
+func autoCleanConfigFromCfg(c config.AutoCleanCfg) ipc.AutoCleanConfig {
+	return ipc.AutoCleanConfig{
+		Enabled:            c.Enabled,
+		RiskAcknowledgedAt: c.RiskAcknowledgedAt,
+		ModulesAllowed:     append([]string(nil), c.ModulesAllowed...),
+		MinIdleDays:        c.MinIdleDays,
+		MinSizeMB:          c.MinSizeMB,
+		SizeCapPerTickGB:   c.SizeCapPerTickGB,
+	}
+}
+
 // Run brings up the IPC server, the daily scheduler, and the pressure
 // watcher, then blocks until ctx is canceled. Returns ctx.Err() on clean
 // shutdown (which the caller is expected to treat as success).
 func (d *Daemon) Run(ctx context.Context) error {
 	d.started = d.now()
+
+	// Build a live, mutable snapshot of cfg.AutoClean for the IPC service.
+	// Toggle (called by `noo-noo auto-clean enable/disable`) mutates this
+	// struct in place; tick.go reads it via autoCleanCfgFn so the very next
+	// tick observes the change without a daemon restart.
+	acSnap := autoCleanConfigFromCfg(d.cfg.AutoClean)
+	d.autoCleanCfg = &acSnap
+
+	// Point tick.go's autoCleanCfgFn at the live, IPC-mutable snapshot.
+	// Without this, tick.go's default returns Enabled=false unconditionally
+	// and `noo-noo auto-clean enable` would have no effect on tick behavior.
+	autoCleanCfgFn = func(_ config.Config) autoclean.Config {
+		return autoclean.Config{
+			Enabled:            acSnap.Enabled,
+			RiskAcknowledgedAt: acSnap.RiskAcknowledgedAt,
+			ModulesAllowed:     acSnap.ModulesAllowed,
+			MinIdleDays:        acSnap.MinIdleDays,
+			MinSizeMB:          acSnap.MinSizeMB,
+			SizeCapPerTickGB:   acSnap.SizeCapPerTickGB,
+		}
+	}
 
 	handlers := ipc.Handlers{
 		Report:      &ipc.ReportService{Store: d.store},
@@ -116,6 +159,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 			StartedAt: func() time.Time { return d.started },
 			Version:   version,
 		},
+		// stats=nil: the store does not yet implement
+		// AutoCleanStatsSince. Status returns zero deletion counters in
+		// that case rather than erroring (see autoclean_method.go). save=nil:
+		// Toggle persists in memory only for now; restart re-reads TOML.
+		AutoClean: ipc.NewAutoCleanService(&acSnap, nil, nil),
 	}
 	srv := ipc.NewServer(d.cfg.Daemon.SocketPath, handlers)
 	if err := srv.Start(ctx); err != nil {

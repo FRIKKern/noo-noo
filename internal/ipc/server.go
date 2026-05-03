@@ -22,6 +22,7 @@ type Handlers struct {
 	Suggestions *SuggestionsService
 	Clean       *CleanService
 	Daemon      *DaemonService
+	AutoClean   *AutoCleanService
 }
 
 // ReportService is the receiver registered as "Report" on the RPC server.
@@ -101,6 +102,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	if s.handlers.Daemon != nil {
 		_ = srv.RegisterName("Daemon", s.handlers.Daemon)
+	}
+	if s.handlers.AutoClean != nil {
+		_ = srv.RegisterName("AutoClean", s.handlers.AutoClean)
 	}
 	s.rpcSrv = srv
 
