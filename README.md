@@ -1,4 +1,4 @@
-# noo-noo — v0.4.0 (brew installable)
+# noo-noo — v0.5.0 (pressure-triggered scans + opt-in auto-clean)
 
 [![CI](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml/badge.svg)](https://github.com/FRIKKern/noo-noo/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/FRIKKern/noo-noo)](https://github.com/FRIKKern/noo-noo/releases)
@@ -12,6 +12,66 @@ brew install FRIKKern/tap/noo-noo
 ```
 
 > Inspired by [Noo-Noo](https://teletubbies.fandom.com/wiki/Noo-Noo), the Teletubbies vacuum cleaner. `noo-noo` watches your Mac for the sneaky stuff that piles up while you work — abandoned `node_modules`, runaway caches, idle iOS simulators, dead launchd agents — and quietly suggests cleanups when (and only when) the data says you'll get something back. Nothing destructive runs without your explicit approval.
+
+## What's new in 0.5
+
+- **Pressure-triggered scans.** `noo-nood` now watches memory + free-disk
+  pressure in real time and fires an out-of-band scan when the machine
+  starts to fill up — instead of waiting for the daily 03:00 tick.
+- **Opt-in auto-clean.** With your explicit consent, the daemon can delete
+  qualifying assets on its own. Default-off, multi-gate safety design,
+  audited. See [the section below](#auto-clean-opt-in-default-off).
+- **`noo-noo auto-clean`** CLI subcommand: `enable | disable | status | history`.
+- **`[pressure]` and `[auto_clean]`** new TOML config sections with safe defaults.
+
+## Pressure-triggered scans (new in 0.5)
+
+`noo-noo` watches memory and free-disk pressure in real time. When sustained-high
+pressure is detected (default: 60 s above the threshold), the daemon fires an
+out-of-band scan instead of waiting for the daily tick. Configure via
+`[pressure]` in `~/.config/noo-noo/config.toml`:
+
+```toml
+[pressure]
+sample_interval_seconds = 15
+debounce_seconds = 60
+mem_high_ratio = 0.85
+disk_low_gb = 10
+```
+
+## Auto-clean (opt-in, default off)
+
+`noo-noo` can delete qualifying assets on its own — but only after you opt
+in with a deliberate friction step:
+
+```sh
+noo-noo auto-clean enable --i-understand-the-risks
+```
+
+By default, auto-clean is **off**. When enabled, it only acts on
+suggestions that meet **all** of these gates:
+
+- module is in `auto_clean.modules_allowed` (default `["dev"]` — node_modules etc.)
+- repo is >= `auto_clean.min_idle_days` days idle (default 90)
+- target size is >= `auto_clean.min_size_mb` MB (default 1024)
+- per-tick budget remaining (default cap: 10 GB/tick)
+- safety guard at delete-time (path resolves under configured roots; not a symlink out)
+- only on the daily tick — pressure-triggered scans never auto-clean
+
+Every auto-clean attempt is logged. View history:
+
+```sh
+noo-noo auto-clean history
+```
+
+Disable at any time (kill switch, takes effect within 60 s):
+
+```sh
+noo-noo auto-clean disable
+```
+
+See the [Phase 0.5 plan](docs/2026-05-03-noo-noo-phase-0.5-pressure-and-autoclean.html)
+for the full safety design.
 
 ## What's new in 0.4
 

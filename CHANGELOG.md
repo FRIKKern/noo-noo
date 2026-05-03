@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-03
+### Added
+- Pressure-triggered scans: daemon samples `vm_stat` + free disk every 15 s,
+  fires an out-of-band scan when sustained-high pressure is detected
+  (`internal/pressure`).
+- Filesystem scan-collector (`internal/scan`) called from CLI, scheduler tick,
+  and pressure trigger — closes the Phase 0.2 stale-data bug.
+- Opt-in auto-clean engine (`internal/autoclean`) with six-gate safety design,
+  default-disabled, multi-step opt-in via `--i-understand-the-risks` flag.
+- New `auto_clean_events` audit table (migration 0005).
+- IPC: `AutoClean.Status` and `AutoClean.Toggle` methods.
+- CLI: `noo-noo auto-clean enable|disable|status|history` subcommand.
+- Config: `[pressure]` and `[auto_clean]` sections with safe defaults.
+- e2e tests: pressure-triggered scan in < 60 s; auto-clean gate cascade.
+
+### Changed
+- Daemon scheduler tick now: scan -> heuristics -> autoclean (if enabled)
+  -> notify. Previously: just heuristics -> notify.
+
+### Security
+- Auto-clean is default-disabled; first enable requires
+  `noo-noo auto-clean enable --i-understand-the-risks`.
+- Auto-clean only acts on `dev`-module suggestions by default;
+  caches/startup require explicit allowlist edit.
+- Per-tick size cap (10 GB default) bounds worst-case damage.
+- Pressure-triggered scans never auto-clean; only the daily tick may.
+
 ## [0.4.0] — 2026-05-03
 ### Added
 - GitHub Actions release workflow (`.github/workflows/release.yml`) that
