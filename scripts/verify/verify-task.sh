@@ -164,6 +164,7 @@ case "$TASK" in
     require_commit_prefix "feat(core):"
     require_files_changed "internal/core/size.go" "internal/core/size_test.go"
     require_test "./internal/core/" "TestBytes"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -171,6 +172,7 @@ case "$TASK" in
     require_commit_prefix "feat(core):"
     require_files_changed "internal/core/walk.go" "internal/core/walk_test.go"
     require_test "./internal/core/" "TestDirSize"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -178,6 +180,7 @@ case "$TASK" in
     require_commit_prefix "feat(core):"
     require_files_changed "internal/core/safety.go" "internal/core/safety_test.go"
     require_test "./internal/core/" "TestSafety"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -185,6 +188,7 @@ case "$TASK" in
     require_commit_prefix "feat(audit):"
     require_files_changed "internal/audit/audit.go" "internal/audit/audit_test.go"
     require_test_pkg "./internal/audit/"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -192,6 +196,7 @@ case "$TASK" in
     require_commit_prefix "feat(modules):"
     require_files_changed "internal/modules/module.go"
     require_build "./internal/modules/"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -200,6 +205,7 @@ case "$TASK" in
     # Two source files + test file allowed.
     require_files_changed "internal/modules/dev/dev.go" "internal/modules/dev/dev_test.go" "internal/modules/dev/syscalls.go"
     require_test "./internal/modules/dev/" "TestScan"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -207,6 +213,7 @@ case "$TASK" in
     require_commit_prefix "test(dev):"
     require_files_changed "internal/modules/dev/dev_test.go"
     require_test "./internal/modules/dev/" "TestApply"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -214,6 +221,7 @@ case "$TASK" in
     require_commit_prefix "feat(caches):"
     require_files_changed "internal/modules/caches/caches.go" "internal/modules/caches/caches_test.go"
     require_test_pkg "./internal/modules/caches/"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -221,6 +229,7 @@ case "$TASK" in
     require_commit_prefix "feat(startup):"
     require_files_changed "internal/modules/startup/runner.go" "internal/modules/startup/runner_test.go"
     require_test "./internal/modules/startup/" "TestFakeRunner"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -228,6 +237,7 @@ case "$TASK" in
     require_commit_prefix "feat(startup):"
     require_files_changed "internal/modules/startup/startup.go" "internal/modules/startup/startup_test.go"
     require_test "./internal/modules/startup/" "TestScan|TestApply|TestSystem"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -235,6 +245,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/cli.go" "internal/cli/cli_test.go"
     require_test "./internal/cli/" "TestDispatch"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -242,6 +253,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/confirm.go" "internal/cli/output.go"
     require_build "./internal/cli/"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -249,6 +261,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/dev_cmd.go"
     require_build "./..."
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -256,6 +269,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/caches_cmd.go"
     require_build "./..."
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -263,6 +277,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/startup_cmd.go"
     require_build "./..."
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -270,6 +285,7 @@ case "$TASK" in
     require_commit_prefix "feat(cli):"
     require_files_changed "internal/cli/report_cmd.go"
     require_build "./..."
+    require_cmd "make lint" "make lint"
     pass
     ;;
 
@@ -278,6 +294,7 @@ case "$TASK" in
     require_files_changed "cmd/noo-noo/main.go"
     require_cmd "make build" "make build"
     require_cmd "./bin/noo-noo 2>&1 | grep -q '^Usage:'" "binary prints Usage banner"
+    require_cmd "make lint" "make lint"
     pass
     ;;
 

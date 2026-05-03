@@ -58,6 +58,15 @@ module testmod
 go $v
 EOF
 
+  # Minimal Makefile so `make lint` works in the sandbox. Uses gofmt + go vet
+  # only (skips golangci-lint) — that's enough to validate verifier behaviour.
+  printf '%s\n' \
+    '.PHONY: lint' \
+    'lint:' \
+    "$(printf '\tgofmt -l . | tee /dev/stderr | (! read)')" \
+    "$(printf '\tgo vet ./...')" \
+    > Makefile
+
   git add .
   git commit -q -m "chore: initial scaffold"
   printf '%s' "$sb"
