@@ -90,3 +90,14 @@ type StatusResponse struct {
 	Version string
 	Uptime  time.Duration
 }
+
+// TriggerScanArgs is the request body for Daemon.TriggerScan. Empty for now;
+// reserved for future flags (e.g. specific module).
+type TriggerScanArgs struct{}
+
+// TriggerScanReply reports the outcome of an on-demand scan.
+type TriggerScanReply struct {
+	Ok               bool  `json:"ok"`
+	SuggestionsAdded int   `json:"suggestions_added"`
+	DurationMs       int64 `json:"duration_ms"`
+}

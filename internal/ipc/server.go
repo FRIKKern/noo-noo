@@ -55,6 +55,10 @@ type CleanService struct {
 type DaemonService struct {
 	StartedAt func() time.Time
 	Version   string
+	// sched is the scheduler hook backing TriggerScan. May be nil in tests
+	// or in early daemon boot before the scheduler is wired; TriggerScan
+	// guards against the nil case so a stray call cannot panic.
+	sched SchedulerKicker
 }
 
 // Server listens on a Unix socket and dispatches JSON-RPC requests.
