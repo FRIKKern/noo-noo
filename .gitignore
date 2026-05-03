@@ -6,15 +6,20 @@
 /bin/
 /dist/
 
-# Wails (added in v0.3) — ignore compiled app bundles produced by `wails3 build`
-# but keep the source-tree build/ directory under cmd/noo-noo-app/ which holds
-# the appicon and other Wails build inputs. Also un-ignore the source-tree
-# build/release/ (Phase 0.4 release scripts) and build/brew/ (formula
-# templates) which are committed source, not build outputs.
+# Wails (added in v0.3) — ignore compiled app bundles produced by `wails3 build`.
+# The pattern is path-anchored (no leading slash but applied per-directory)
+# so it only catches `build/` directories that aren't explicitly re-included
+# below. Source-tree build/ under cmd/noo-noo-app/ (appicon + Wails inputs)
+# AND under repo root (Phase 0.4 release scripts + brew templates) stay
+# committed — those are inputs, not outputs.
 build/
-!cmd/noo-noo-app/build/
+!build/
 !build/release/
+!build/release/**
 !build/brew/
+!build/brew/**
+!cmd/noo-noo-app/build/
+!cmd/noo-noo-app/build/**
 frontend/dist/
 frontend/node_modules/
 frontend/.svelte-kit/
