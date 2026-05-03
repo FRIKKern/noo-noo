@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/frikkjarl/noo-noo/internal/core"
+	"github.com/frikkjarl/noo-noo/internal/modules"
 )
 
 func TestScanFindsArtifacts(t *testing.T) {
@@ -76,5 +77,42 @@ func mustWrite(t *testing.T, p string, size int) {
 	t.Helper()
 	if err := os.WriteFile(p, make([]byte, size), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApplyDeletes(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "repo", "node_modules")
+	mustMkdir(t, target)
+	mustWrite(t, filepath.Join(target, "x.js"), 1000)
+
+	safety := core.NewSafety([]string{root}, nil)
+	m := New([]string{root}, safety)
+	rep, _ := m.Scan(context.Background())
+	if len(rep.Items) != 1 {
+		t.Fatalf("setup: want 1 item, got %d", len(rep.Items))
+	}
+	actions := m.Plan(rep)
+	res, err := m.Apply(context.Background(), actions[0])
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.BytesFreed != 1000 {
+		t.Errorf("BytesFreed = %d, want 1000", int64(res.BytesFreed))
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("target should be gone, stat err: %v", err)
+	}
+}
+
+func TestApplyRefusesOutsideAllowlist(t *testing.T) {
+	safety := core.NewSafety([]string{t.TempDir()}, nil)
+	m := New(nil, safety)
+	_, err := m.Apply(context.Background(), modules.Action{
+		Op:     "delete",
+		Target: "/etc/passwd",
+	})
+	if err == nil {
+		t.Error("expected refusal")
 	}
 }
