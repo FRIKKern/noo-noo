@@ -325,8 +325,11 @@ case "$TASK" in
     ;;
 
   22)
+    # tools.go is the canonical Go pattern for keeping deps pinned in go.mod
+    # before any production code imports them. It's removed once a real
+    # importer lands (Task 23 for go-toml/v2, Task 24 for sqlite).
     require_commit_prefix "chore(deps):"
-    require_files_changed "go.mod" "go.sum"
+    require_files_changed "go.mod" "go.sum" "tools.go"
     require_cmd "go mod tidy && git diff --quiet -- go.mod go.sum" "go mod tidy clean (no diff)"
     require_cmd "go build ./..." "go build ./..."
     require_cmd "make lint" "make lint"
