@@ -1,4 +1,5 @@
 <script lang="ts">
+  import './lib/theme.css'
   import { onMount } from 'svelte'
   import { loadConfig, saveConfig, openInEditor, type Config } from './lib/api'
 
@@ -77,11 +78,8 @@
 </main>
 
 <style>
-  .wrap { max-width: 480px; margin: 1.5rem auto; padding: 0 1rem; font-family: system-ui; }
-  section { border-bottom: 1px solid #ddd; padding: 0.8rem 0; }
-  h2 { font-size: 0.95rem; margin: 0 0 0.4rem; color: #2c5f8d; }
+  .wrap { max-width: 480px; margin: 1.5rem auto; padding: 0 1rem; }
   label { display: block; margin: 0.4rem 0; font-size: 0.9rem; }
-  input[type="number"], select { display: block; margin-top: 0.2rem; padding: 0.3rem; }
-  footer { position: sticky; bottom: 0; background: #fff; padding: 0.8rem 0; border-top: 1px solid #ddd; }
-  button { padding: 0.5rem 1rem; font-size: 0.95rem; }
+  input[type="number"], select { display: block; margin-top: 0.2rem; }
+  footer { position: sticky; bottom: 0; padding: 0.8rem 0; border-top: 1px solid var(--rule); }
 </style>
