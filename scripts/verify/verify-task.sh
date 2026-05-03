@@ -817,7 +817,149 @@ case "$TASK" in
     pass
     ;;
 
+  83)
+    require_commit_prefix "chore(verify):"
+    require_files_changed "scripts/verify/verify-task.sh"
+    require_cmd "bash -n scripts/verify/verify-task.sh" "syntax check"
+    pass
+    ;;
+
+  84)
+    require_commit_prefix "feat(scan):"
+    require_files_changed "internal/scan/scan.go" "internal/scan/scan_test.go"
+    require_test_pkg "./internal/scan/"
+    require_cmd "go vet ./internal/scan/..." "go vet"
+    pass
+    ;;
+
+  85)
+    require_commit_prefix "feat(scan):"
+    require_files_changed "internal/scan/repos.go" "internal/scan/repos_test.go"
+    require_test_pkg "./internal/scan/"
+    require_cmd "go vet ./internal/scan/..." "go vet"
+    pass
+    ;;
+
+  86)
+    require_commit_prefix "feat(scan):"
+    require_files_changed "internal/scan/caches.go" "internal/scan/caches_test.go"
+    require_test_pkg "./internal/scan/"
+    require_cmd "go vet ./internal/scan/..." "go vet"
+    pass
+    ;;
+
+  87)
+    require_commit_prefix "feat(pressure):"
+    require_files_changed "internal/pressure/pressure.go" "internal/pressure/vmstat.go" "internal/pressure/vmstat_test.go"
+    require_test_pkg "./internal/pressure/"
+    require_cmd "go vet ./internal/pressure/..." "go vet"
+    pass
+    ;;
+
+  88)
+    require_commit_prefix "feat(pressure):"
+    require_files_changed "internal/pressure/disk.go" "internal/pressure/disk_test.go"
+    require_test_pkg "./internal/pressure/"
+    require_cmd "go vet ./internal/pressure/..." "go vet"
+    pass
+    ;;
+
+  89)
+    require_commit_prefix "feat(pressure):"
+    require_files_changed "internal/pressure/watch.go" "internal/pressure/watch_test.go"
+    require_test_pkg "./internal/pressure/"
+    require_cmd "go vet ./internal/pressure/..." "go vet"
+    pass
+    ;;
+
+  90)
+    require_commit_prefix "feat(autoclean):"
+    require_files_changed "internal/autoclean/config.go" "internal/autoclean/config_test.go"
+    require_test_pkg "./internal/autoclean/"
+    require_cmd "go vet ./internal/autoclean/..." "go vet"
+    pass
+    ;;
+
+  91)
+    require_commit_prefix "feat(autoclean):"
+    require_files_changed "internal/autoclean/apply.go" "internal/autoclean/apply_test.go" "internal/store/migrations/0005_auto_clean_events.sql"
+    require_test_pkg "./internal/autoclean/"
+    require_cmd "go vet ./internal/autoclean/..." "go vet"
+    pass
+    ;;
+
+  92)
+    require_commit_prefix "feat(autoclean):"
+    require_files_changed "internal/autoclean/budget.go" "internal/autoclean/budget_test.go"
+    require_test_pkg "./internal/autoclean/"
+    require_cmd "go vet ./internal/autoclean/..." "go vet"
+    pass
+    ;;
+
+  93)
+    require_commit_prefix "feat(ipc):"
+    require_files_changed "internal/ipc/autoclean_method.go" "internal/ipc/autoclean_method_test.go"
+    require_test_pkg "./internal/ipc/"
+    require_cmd "go vet ./internal/ipc/..." "go vet"
+    pass
+    ;;
+
+  94)
+    require_commit_prefix "feat(daemon):"
+    require_files_changed "cmd/noo-nood/main.go"
+    require_build "./cmd/noo-nood"
+    require_cmd "go vet ./cmd/noo-nood/..." "go vet"
+    pass
+    ;;
+
+  95)
+    require_commit_prefix "feat(daemon):"
+    require_files_changed "cmd/noo-nood/tick.go"
+    require_build "./cmd/noo-nood"
+    require_cmd "go vet ./cmd/noo-nood/..." "go vet"
+    pass
+    ;;
+
+  96)
+    require_commit_prefix "feat(cli):"
+    require_files_changed "internal/cli/autoclean_cmd.go" "internal/cli/autoclean_cmd_test.go"
+    require_test_pkg "./internal/cli/"
+    require_cmd "go vet ./internal/cli/..." "go vet"
+    pass
+    ;;
+
+  97)
+    require_commit_prefix "feat(config):"
+    require_files_changed "internal/config/config.go" "internal/config/config_test.go"
+    require_test_pkg "./internal/config/"
+    require_cmd "go vet ./internal/config/..." "go vet"
+    pass
+    ;;
+
+  98)
+    require_commit_prefix "test(e2e):"
+    require_files_changed "test/e2e/pressure_scan_test.go"
+    require_cmd "go test -tags=e2e -run TestPressureScan ./test/e2e/..." "e2e pressure"
+    pass
+    ;;
+
+  99)
+    require_commit_prefix "test(e2e):"
+    require_files_changed "test/e2e/autoclean_gates_test.go"
+    require_cmd "go test -tags=e2e -run TestAutoCleanGates ./test/e2e/..." "e2e autoclean"
+    pass
+    ;;
+
+  100)
+    require_commit_prefix "docs:"
+    require_files_changed "CHANGELOG.md" "README.md"
+    require_cmd "grep -q '## \\[0.5.0\\]' CHANGELOG.md" "0.5.0 changelog entry"
+    require_cmd "grep -q 'auto-clean' README.md" "auto-clean in readme"
+    require_cmd "git tag --list | grep -q '^v0.5.0$'" "v0.5.0 tag"
+    pass
+    ;;
+
   *)
-    fail "unknown task id $TASK (valid: 1-82)"
+    fail "unknown task id $TASK (valid: 1-100)"
     ;;
 esac
