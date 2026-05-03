@@ -27,7 +27,10 @@ jobs:
         run: go test -race ./...
 
   lint:
-    runs-on: ubuntu-latest
+    # macOS-latest because Wails v3 alpha requires webkit2gtk-4.1 on Linux,
+    # which isn't installed on ubuntu-latest by default. Easier to lint on
+    # the same platform we ship to.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
