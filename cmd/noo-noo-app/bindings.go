@@ -1,12 +1,44 @@
 package main
 
-// Bindings is the Go-side object whose exported methods Wails surfaces to
-// the Svelte frontend (auto-generated TypeScript wrappers under
-// frontend/wailsjs/). Real methods land in tasks 62 and 63 (GetConfig /
-// SaveConfig); this scaffold ensures the bindings codegen has a non-empty
-// type to walk at build time.
-type Bindings struct{}
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 
-// Greet is a Wails-default placeholder so the codegen produces at least one
-// exported method until task 62 replaces it with GetConfig.
-func (b *Bindings) Greet(name string) string { return "Hello, " + name }
+	"github.com/FRIKKern/noo-noo/internal/config"
+)
+
+// Bindings exposes Go methods to the Svelte frontend via Wails. Methods must
+// have JSON-marshallable parameter and return types.
+type Bindings struct {
+	// configPath is the file the Settings UI reads/writes. Defaults to
+	// ~/.config/noo-noo/config.toml; tests override.
+	configPath string
+}
+
+// NewBindings constructs a Bindings rooted at the default config path.
+func NewBindings() *Bindings {
+	home, _ := os.UserHomeDir()
+	return &Bindings{configPath: filepath.Join(home, ".config", "noo-noo", "config.toml")}
+}
+
+// GetConfig reads ~/.config/noo-noo/config.toml (or returns defaults if
+// missing) and returns it for Svelte two-way binding.
+func (b *Bindings) GetConfig() (config.Config, error) {
+	return config.Load(b.configPath)
+}
+
+// OpenConfigInEditor opens the raw TOML file in the user's default text editor
+// via "open -t". Returns immediately; does not wait for the editor to close.
+func (b *Bindings) OpenConfigInEditor() error {
+	if _, err := os.Stat(b.configPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(filepath.Dir(b.configPath), 0o755); err != nil {
+			return fmt.Errorf("mkdir: %w", err)
+		}
+		if err := os.WriteFile(b.configPath, []byte("# noo-noo config\n"), 0o600); err != nil {
+			return fmt.Errorf("seed: %w", err)
+		}
+	}
+	return exec.Command("open", "-t", b.configPath).Start()
+}
