@@ -122,10 +122,17 @@ func (s *ipcClientShim) Status() (menubar.Status, error) {
 }
 
 // trayAdapter wraps the Wails tray so it satisfies our Tray interface.
-type trayAdapter struct{ inner *application.SystemTray }
+// The handler is captured so menu clicks can be routed through
+// menubar.Dispatch when SetMenu is called.
+type trayAdapter struct {
+	inner   *application.SystemTray
+	handler menubar.Handler
+}
 
-func newTrayAdapter(t *application.SystemTray) *trayAdapter { return &trayAdapter{inner: t} }
-func (a *trayAdapter) SetTitle(s string)                    { a.inner.SetLabel(s) }
+func newTrayAdapter(t *application.SystemTray, h menubar.Handler) *trayAdapter {
+	return &trayAdapter{inner: t, handler: h}
+}
+func (a *trayAdapter) SetTitle(s string) { a.inner.SetLabel(s) }
 func (a *trayAdapter) SetIcon(i menubar.Icon) {
 	if i.Template {
 		a.inner.SetTemplateIcon(i.PNG)
@@ -134,8 +141,12 @@ func (a *trayAdapter) SetIcon(i menubar.Icon) {
 	a.inner.SetIcon(i.PNG)
 }
 
-// SetMenu is a no-op until Task 56 maps menubar.Menu → *application.Menu.
-func (a *trayAdapter) SetMenu(_ *menubar.Menu) {}
+// SetMenu translates the dependency-free menubar.Menu into a real
+// *application.Menu (with click callbacks routed back through
+// menubar.Dispatch via the captured handler) and attaches it.
+func (a *trayAdapter) SetMenu(m *menubar.Menu) {
+	a.inner.SetMenu(buildWailsMenu(m, a.handler))
+}
 
 func main() {
 	app := buildApp(buildOpts{})
@@ -146,9 +157,8 @@ func main() {
 	defer func() { _ = cli.Close() }()
 
 	tray := app.SystemTray.New()
-	adapter := newTrayAdapter(tray)
 	handler := newAppHandler(app, cli)
-	_ = handler // click wiring lives in Task 56+ (menu→Wails conversion)
+	adapter := newTrayAdapter(tray, handler)
 
 	poller := menubar.NewPoller(&ipcClientShim{c: cli}, 30*time.Second,
 		func(st menubar.Status) { refreshTray(adapter, st) })
