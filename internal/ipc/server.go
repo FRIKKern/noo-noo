@@ -38,9 +38,16 @@ type SuggestionsService struct {
 	Store *store.Store
 }
 
-// CleanService is the receiver registered as "Clean". Task 38 attaches the
-// Execute method on this type in a sibling file.
-type CleanService struct{}
+// CleanService is the receiver registered as "Clean". The Execute method
+// (in clean_method.go) records that the user accepted a cleanup suggestion
+// and returns a summary; the daemon does not perform deletes itself in
+// Phase 0.2 (Phase 0.5 will introduce auto-clean).
+type CleanService struct {
+	Store *store.Store
+	// Now is injectable for deterministic audit timestamps in tests. If nil,
+	// Execute falls back to time.Now.
+	Now func() time.Time
+}
 
 // DaemonService is the receiver registered as "Daemon". The Status method is
 // defined here so the IPC foundation is end-to-end exercisable; task 39 may
