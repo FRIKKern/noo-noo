@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"github.com/FRIKKern/noo-noo/internal/ipc"
 	"github.com/FRIKKern/noo-noo/internal/menubar"
@@ -59,16 +60,42 @@ func refreshTray(t Tray, st menubar.Status) {
 // appHandler implements menubar.Handler against the live Wails app and IPC
 // client. Click dispatch funnels into these methods via menubar.Dispatch.
 type appHandler struct {
-	app *application.App
-	cli *ipc.Client
+	app         *application.App
+	cli         *ipc.Client
+	settingsWin *application.WebviewWindow
 }
 
 func newAppHandler(app *application.App, cli *ipc.Client) *appHandler {
 	return &appHandler{app: app, cli: cli}
 }
 
-func (h *appHandler) OnScanNow()         { /* Task 58 */ }
-func (h *appHandler) OnOpenSettings()    { /* Task 59 */ }
+func (h *appHandler) OnScanNow() { /* Task 58 */ }
+
+// OnOpenSettings opens (or re-focuses) the singleton Settings webview window.
+// The window is allocated on first click; subsequent clicks Show()+Focus()
+// the existing window so we never end up with multiple settings panels open.
+// On window close we clear the field so the next click re-creates it.
+func (h *appHandler) OnOpenSettings() {
+	if h.settingsWin != nil {
+		h.settingsWin.Show()
+		h.settingsWin.Focus()
+		return
+	}
+	h.settingsWin = h.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:  "Noo-Noo Settings",
+		Width:  520,
+		Height: 640,
+		URL:    "/#/settings",
+		Mac: application.MacWindow{
+			InvisibleTitleBarHeight: 0,
+			TitleBar:                application.MacTitleBarDefault,
+		},
+	})
+	h.settingsWin.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
+		h.settingsWin = nil
+	})
+}
+
 func (h *appHandler) OnQuit()            { h.app.Quit() }
 func (h *appHandler) OnSuggestion(_ int) { /* Task 57 */ }
 

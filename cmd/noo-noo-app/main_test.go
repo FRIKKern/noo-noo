@@ -45,3 +45,18 @@ type fakeTray struct {
 func (f *fakeTray) SetTitle(s string)       { f.title = s }
 func (f *fakeTray) SetIcon(i menubar.Icon)  { f.icon = i }
 func (f *fakeTray) SetMenu(m *menubar.Menu) { f.menu = m }
+
+func TestOpenSettings_OpensSingletonWindow(t *testing.T) {
+	app := buildApp(buildOpts{Headless: true})
+	h := newAppHandler(app, nil)
+
+	h.OnOpenSettings()
+	first := h.settingsWin
+	if first == nil {
+		t.Fatal("settings window not created")
+	}
+	h.OnOpenSettings()
+	if h.settingsWin != first {
+		t.Error("second OnOpenSettings should re-use the existing window, not create a new one")
+	}
+}
