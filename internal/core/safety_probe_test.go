@@ -88,6 +88,12 @@ func TestCanDeleteLeakTargetCategoricallyRejectsSystemAreas(t *testing.T) {
 		{"/usr/local", "/usr/*"},
 		{"/bin/ls", "/bin/*"},
 		{"/sbin/mount", "/sbin/*"},
+		// /private/ is the carve-out, but its system-config subtree is not.
+		{"/private/etc/hosts", "/private/etc/*"},
+		// APFS is case-insensitive by default: a case-variant misauthored
+		// glob reaches the same files and must be equally blocked.
+		{"/library/Preferences", "/library/*"},
+		{"/SYSTEM/Library/CoreServices", "/SYSTEM/Library/*"},
 	}
 	for _, c := range cases {
 		if err := s.CanDeleteLeakTarget(c.path, []string{c.glob}); err == nil {

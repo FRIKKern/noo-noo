@@ -40,13 +40,19 @@ var alwaysBlocked = []string{
 
 // leakCategoricallyBlocked are prefixes no leak signature may ever target.
 // This is the categorical floor of the leak carve-out: /private/ is
-// deliberately absent (that is the carve-out), everything else stays walled.
+// deliberately absent (that is the carve-out), but its system-config subtree
+// /private/etc (the real /etc) stays walled — the carve-out exists for
+// /private/var/folders and /private/tmp leak classes, never system config.
+// Matching is case-INSENSITIVE: APFS is case-insensitive by default, so
+// "/library/..." reaches the same files as "/Library/..." and must be
+// equally blocked.
 var leakCategoricallyBlocked = []string{
 	"/System/",
 	"/Library/",
 	"/usr/",
 	"/bin/",
 	"/sbin/",
+	"/private/etc/",
 }
 
 // CanDelete returns nil if path is permitted to be removed, or an error
@@ -142,8 +148,9 @@ func (s *Safety) CanDeleteLeakTarget(path string, sigGlobs []string) error {
 }
 
 func leakCategoricalCheck(clean string) error {
+	p := clean + "/"
 	for _, b := range leakCategoricallyBlocked {
-		if strings.HasPrefix(clean+"/", b) {
+		if len(p) >= len(b) && strings.EqualFold(p[:len(b)], b) {
 			return fmt.Errorf("leak target %q is in categorically-blocked system area %q", clean, b)
 		}
 	}
