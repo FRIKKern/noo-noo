@@ -24,8 +24,9 @@ type AutoCleanConfig struct {
 }
 
 // AutoCleanStatsStore is the narrow read surface Status needs. The real
-// *store.Store will satisfy this once the auto_clean_events table ships;
-// tests pass nil because the toggle path never touches it.
+// *store.Store satisfies it (see internal/store/autoclean_events.go), and
+// main.go wires it in; nil is still tolerated (Status then reports zero
+// deletion counters) for tests and early-boot paths.
 type AutoCleanStatsStore interface {
 	// AutoCleanStatsSince returns (count, freedBytes) of successful
 	// 'deleted' rows whose started_at_unix >= sinceUnix.
