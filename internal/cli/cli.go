@@ -51,6 +51,8 @@ Commands:
                            Manage launchd auto-start services
   caches  [list|clean]     Manage ~/Library/Caches targets
   dev     [list|clean]     Manage build artifacts under scan roots
+  leaks   [list|scan|clean]
+                           Find known leak classes (truth-sized, lsof-gated)
 
 Global flags:
   -y         Skip confirmation prompts
