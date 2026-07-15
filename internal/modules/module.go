@@ -58,13 +58,19 @@ type Item struct {
 // to the user for confirmation before calling Apply.
 type Action struct {
 	Module string
-	Op     string // "delete" | "disable" | "enable"
+	Op     string // "delete" | "disable" | "enable" | "clear" | "relocate"
 	Target string
-	Size   core.Bytes
-	Risk   RiskLevel
+	// Destination is where Target ends up for Op "relocate" (move to an
+	// external volume + symlink back). Empty for every other op.
+	Destination string
+	Size        core.Bytes
+	Risk        RiskLevel
 }
 
 // Result is the outcome of one Apply call.
+//
+// For Op "relocate", BytesFreed counts LOCAL bytes reclaimed on the internal
+// disk — the data lives on at Action.Destination, it is not deleted.
 type Result struct {
 	Action     Action
 	BytesFreed core.Bytes

@@ -31,6 +31,7 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 			core.NewSafety([]string{filepath.Join(homeDir(), "Library", "Caches")}, nil)),
 		startup.New(defaultStartupConfig(), startup.ExecRunner{},
 			filepath.Join(auditDir(), "startup-restore.jsonl"), os.Getuid()),
+		newOffloadModule(),
 	}
 
 	var grand core.Bytes

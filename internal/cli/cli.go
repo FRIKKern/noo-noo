@@ -51,6 +51,8 @@ Commands:
                            Manage launchd auto-start services
   caches  [list|clean]     Manage ~/Library/Caches targets
   dev     [list|clean]     Manage build artifacts under scan roots
+  offload [scan|plan|apply]
+                           Offload bulky assets to a pinned external volume
 
 Global flags:
   -y         Skip confirmation prompts

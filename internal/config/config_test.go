@@ -162,3 +162,54 @@ mem_high_ratio = 0.95
 		t.Errorf("DebounceSeconds = %d, want default 60", cfg.Pressure.DebounceSeconds)
 	}
 }
+
+func TestOffloadDefaultsDisabled(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(filepath.Join(dir, "nope.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Offload.DestRoot != "" || cfg.Offload.DestVolumeUUID != "" {
+		t.Fatalf("offload must default disabled (empty), got %+v", cfg.Offload)
+	}
+}
+
+func TestOffloadUserOverrideAndTilde(t *testing.T) {
+	t.Setenv("HOME", "/tmp/fakehome")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := []byte(`
+[offload]
+dest_root = "/Volumes/SATECHI/noo-noo-offload"
+dest_volume_uuid = "0DBD1B63-0377-450B-A340-7E72D0925EBC"
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Offload.DestRoot != "/Volumes/SATECHI/noo-noo-offload" {
+		t.Errorf("DestRoot = %q", cfg.Offload.DestRoot)
+	}
+	if cfg.Offload.DestVolumeUUID != "0DBD1B63-0377-450B-A340-7E72D0925EBC" {
+		t.Errorf("DestVolumeUUID = %q", cfg.Offload.DestVolumeUUID)
+	}
+
+	// Tilde in dest_root expands like the daemon paths do.
+	body2 := []byte(`
+[offload]
+dest_root = "~/offload"
+`)
+	if err := os.WriteFile(path, body2, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.Offload.DestRoot != "/tmp/fakehome/offload" {
+		t.Errorf("tilde DestRoot = %q, want /tmp/fakehome/offload", cfg2.Offload.DestRoot)
+	}
+}

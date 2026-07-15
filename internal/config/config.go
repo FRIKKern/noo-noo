@@ -21,6 +21,17 @@ type Config struct {
 	Scan       ScanCfg       `toml:"scan"`
 	Pressure   PressureCfg   `toml:"pressure"`
 	AutoClean  AutoCleanCfg  `toml:"auto_clean"`
+	Offload    OffloadCfg    `toml:"offload"`
+}
+
+// OffloadCfg pins the offload destination (Phase 0.6). Both fields empty —
+// the default — means offload is DISABLED: scans still report, but no
+// relocation can be planned or applied. DestVolumeUUID is the volume's
+// identity (`diskutil info <mount>` → Volume UUID); mount-point names are
+// not identity.
+type OffloadCfg struct {
+	DestRoot       string `toml:"dest_root"`
+	DestVolumeUUID string `toml:"dest_volume_uuid"`
 }
 
 // PressureCfg controls the real-time pressure watcher (Phase 0.5). Sampling
@@ -120,6 +131,9 @@ func Defaults() Config {
 			SizeCapPerTickGB: 10,
 			// RiskAcknowledgedAt deliberately empty; CLI sets on first enable.
 		},
+		// Offload deliberately zero: disabled until the user pins a
+		// destination volume (dest_root + dest_volume_uuid).
+		Offload: OffloadCfg{},
 	}
 }
 
@@ -139,6 +153,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.Daemon.SocketPath = expandTilde(cfg.Daemon.SocketPath)
 	cfg.Daemon.StorePath = expandTilde(cfg.Daemon.StorePath)
+	cfg.Offload.DestRoot = expandTilde(cfg.Offload.DestRoot)
 	for i, r := range cfg.Scan.Roots {
 		cfg.Scan.Roots[i] = expandTilde(r)
 	}
