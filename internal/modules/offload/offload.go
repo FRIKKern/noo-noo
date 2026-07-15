@@ -343,7 +343,9 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 			srcN, int64(srcB), dstN, int64(dstB)))
 	}
 
-	// Measure real local reclaim before the tree moves aside.
+	// Estimate local reclaim before the tree moves aside: the clone-aware
+	// unique-allocated bytes of the source (what dropping the local copy
+	// can at most free — extents referenced from outside it stay allocated).
 	freed, _ := m.sizes.FreedByDelete(a.Target)
 
 	bak := a.Target + ".noo-noo-bak"

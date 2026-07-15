@@ -8,13 +8,12 @@ import (
 	"syscall"
 
 	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/sizer"
 )
 
-// SizeFns is the sizing seam. The wave's sizer slice (internal/sizer,
-// nn-w1-sizer-truth) owns APFS-clone-aware measurement; this module merges
-// LAST, so until the rebase wires these fields to sizer.Blocks,
-// sizer.UniqueAllocated and sizer.FreedByDelete, the defaults below give an
-// honest allocated-blocks (st_blocks) measure — never naive logical du.
+// SizeFns is the sizing seam, defaulting to internal/sizer (the wave's
+// truth-sizing package, charter D2). Injectable so failure-path tests can
+// fake sizes without real trees.
 type SizeFns struct {
 	// Blocks returns allocated bytes (st_blocks * 512) under path.
 	Blocks func(path string) (core.Bytes, error)
@@ -22,24 +21,36 @@ type SizeFns struct {
 	// tree were the only owner of its blocks (APFS clones share blocks and
 	// make naive sums wildly over-report).
 	UniqueAllocated func(path string) (core.Bytes, error)
-	// FreedByDelete returns the real local bytes a delete/relocate of path
-	// frees.
+	// FreedByDelete estimates the local bytes a delete/relocate of path
+	// frees, BEFORE the tree is touched. Defaults to the clone-aware
+	// extent-union (deleting a tree frees at most its unique allocated
+	// bytes; extents also referenced from outside it stay allocated).
 	FreedByDelete func(path string) (core.Bytes, error)
 }
 
-// fill returns s with nil fields replaced by the fallback implementations.
+// sizerUnique adapts sizer.UniqueAllocated (clone- and sparse-aware
+// extent-union) to the seam's single-path shape.
+func sizerUnique(path string) (core.Bytes, error) {
+	ts, err := sizer.UniqueAllocated(path)
+	if err != nil {
+		return 0, err
+	}
+	return core.Bytes(ts.UniqueAllocated), nil
+}
+
+// fill returns s with nil fields replaced by the production defaults.
 func (s SizeFns) fill() SizeFns {
 	if s.Blocks == nil {
+		// allocatedBlocks rather than sizer.Blocks: it surfaces a "partial:
+		// N unreadable" error alongside the partial total, which Scan turns
+		// into size_error evidence instead of silently under-reporting.
 		s.Blocks = allocatedBlocks
 	}
 	if s.UniqueAllocated == nil {
-		// Honest fallback: allocated blocks is an UPPER BOUND on unique
-		// bytes (clone-shared blocks are counted in full). The sizer wiring
-		// replaces this with the true clone-aware figure.
-		s.UniqueAllocated = allocatedBlocks
+		s.UniqueAllocated = sizerUnique
 	}
 	if s.FreedByDelete == nil {
-		s.FreedByDelete = allocatedBlocks
+		s.FreedByDelete = sizerUnique
 	}
 	return s
 }
