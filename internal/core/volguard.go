@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 // Volume-guard errors. Callers match with errors.Is to distinguish the
@@ -71,6 +73,16 @@ type volumeInfo struct {
 	WritableVolume *bool  `json:"WritableVolume"`
 }
 
+// mountPointOf resolves the mount point of the volume containing path via
+// statfs — the syscall the kernel itself answers, immune to /Volumes naming.
+func mountPointOf(path string) (string, error) {
+	var st unix.Statfs_t
+	if err := unix.Statfs(path, &st); err != nil {
+		return "", err
+	}
+	return unix.ByteSliceToString(st.Mntonname[:]), nil
+}
+
 // CheckDest returns nil only when destDir sits on the volume whose UUID
 // equals pinnedUUID and a live write-probe inside destDir succeeds.
 //
@@ -91,9 +103,17 @@ func (g VolGuard) CheckDest(ctx context.Context, destDir, pinnedUUID string) err
 		return fmt.Errorf("%w: %q is not a reachable directory", ErrVolumeAbsent, destDir)
 	}
 
-	plist, err := runner.Output(ctx, nil, "/usr/sbin/diskutil", "info", "-plist", destDir)
+	// diskutil only resolves mount points / device nodes, not arbitrary
+	// subdirectories — a dest_root like /Volumes/X/offload must be mapped to
+	// its containing volume's mount point before the identity check.
+	mount, err := mountPointOf(destDir)
 	if err != nil {
-		return fmt.Errorf("%w: diskutil cannot resolve %q: %v", ErrVolumeAbsent, destDir, err)
+		return fmt.Errorf("%w: cannot resolve mount point of %q: %v", ErrVolumeAbsent, destDir, err)
+	}
+
+	plist, err := runner.Output(ctx, nil, "/usr/sbin/diskutil", "info", "-plist", mount)
+	if err != nil {
+		return fmt.Errorf("%w: diskutil cannot resolve %q (mount of %q): %v", ErrVolumeAbsent, mount, destDir, err)
 	}
 	jsonBytes, err := runner.Output(ctx, plist, "/usr/bin/plutil", "-convert", "json", "-o", "-", "-")
 	if err != nil {

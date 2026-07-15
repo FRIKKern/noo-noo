@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,4 +136,50 @@ func TestCheckDestLiveSATECHI(t *testing.T) {
 		t.Fatalf("live CheckDest(%s, %s) = %v, want nil", dest, satechiUUID, err)
 	}
 	t.Logf("live CheckDest passed: %s UUID=%s, write-probe ok", dest, satechiUUID)
+}
+
+// recordingRunner captures the args of every diskutil call while delegating
+// to a wrapped fake, so tests can pin WHAT path the guard hands to diskutil.
+type recordingRunner struct {
+	inner        fakeRunner
+	diskutilArgs []string
+}
+
+func (r *recordingRunner) Output(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	if strings.Contains(name, "diskutil") {
+		r.diskutilArgs = append([]string{}, args...)
+	}
+	return r.inner.Output(ctx, stdin, name, args...)
+}
+
+// TestCheckDestSubdirectoryResolvesMountPoint pins the live-use regression
+// found on first real configuration: dest_root is a SUBDIRECTORY of the
+// volume (/Volumes/X/offload), and diskutil only resolves mount points — the
+// guard must hand diskutil the containing volume's mount point, never the
+// subdirectory itself.
+func TestCheckDestSubdirectoryResolvesMountPoint(t *testing.T) {
+	sub := filepath.Join(t.TempDir(), "offload", "deeper")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantMount, err := mountPointOf(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wantMount == sub {
+		t.Fatalf("test setup broken: %q is itself a mount point", sub)
+	}
+
+	rec := &recordingRunner{inner: fakeRunner{jsonOut: `{"VolumeUUID":"ABC-123","Writable":true,"WritableVolume":true}`}}
+	g := VolGuard{Runner: rec}
+	if err := g.CheckDest(context.Background(), sub, "ABC-123"); err != nil {
+		t.Fatalf("subdirectory dest on a live volume must pass the guard, got %v", err)
+	}
+	if len(rec.diskutilArgs) == 0 {
+		t.Fatal("diskutil was never invoked")
+	}
+	got := rec.diskutilArgs[len(rec.diskutilArgs)-1]
+	if got != wantMount {
+		t.Fatalf("diskutil must receive the mount point %q, got %q", wantMount, got)
+	}
 }
