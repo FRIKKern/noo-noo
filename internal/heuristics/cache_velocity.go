@@ -46,16 +46,27 @@ func CacheVelocity(ctx context.Context, st *store.Store, cfg config.Config) []Su
 		if ratio < multi {
 			continue
 		}
+		// Time-normalize the growth: bytes/day from the actual sample
+		// timestamps, not the configured window. Same-second samples (days
+		// == 0) leave the rate at zero rather than dividing by zero — but
+		// in practice the trigger needs a backdated baseline to have a
+		// window at all, so a real firing always spans days > 0.
+		days := latest.At.Sub(oldest.At).Hours() / 24
+		var bytesPerDay float64
+		if days > 0 {
+			bytesPerDay = float64(latest.Bytes-oldest.Bytes) / days
+		}
 		out = append(out, Suggestion{
 			Module: "cache_velocity",
 			Target: target,
-			Reason: fmt.Sprintf("%.1fx growth in %dd (%d -> %d bytes)", ratio,
-				windowDays, oldest.Bytes, latest.Bytes),
+			Reason: fmt.Sprintf("%.1fx growth in %dd (+%s/day)", ratio,
+				windowDays, humanRate(bytesPerDay)),
 			Evidence: map[string]any{
 				"ratio":         ratio,
 				"window_days":   windowDays,
 				"bytes_then":    oldest.Bytes,
 				"bytes_now":     latest.Bytes,
+				"bytes_per_day": bytesPerDay,
 				"recorded_then": oldest.At,
 				"recorded_now":  latest.At,
 			},
@@ -64,6 +75,24 @@ func CacheVelocity(ctx context.Context, st *store.Store, cfg config.Config) []Su
 		})
 	}
 	return out
+}
+
+// humanRate formats a bytes/day value with a binary unit suffix for the
+// suggestion Reason (e.g. 150000000 -> "143 MB"). Kept local to the
+// heuristic so the package pulls in no humanize dependency.
+func humanRate(bytesPerDay float64) string {
+	const k = 1024.0
+	if bytesPerDay < k {
+		return fmt.Sprintf("%.0f B", bytesPerDay)
+	}
+	units := []string{"KB", "MB", "GB", "TB"}
+	f := bytesPerDay / k
+	u := 0
+	for f >= k && u < len(units)-1 {
+		f /= k
+		u++
+	}
+	return fmt.Sprintf("%.0f %s", f, units[u])
 }
 
 // distinctCacheTargets returns the distinct target_path values currently in
