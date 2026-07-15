@@ -38,6 +38,23 @@ var alwaysBlocked = []string{
 	"/private/",
 }
 
+// leakCategoricallyBlocked are prefixes no leak signature may ever target.
+// This is the categorical floor of the leak carve-out: /private/ is
+// deliberately absent (that is the carve-out), but its system-config subtree
+// /private/etc (the real /etc) stays walled — the carve-out exists for
+// /private/var/folders and /private/tmp leak classes, never system config.
+// Matching is case-INSENSITIVE: APFS is case-insensitive by default, so
+// "/library/..." reaches the same files as "/Library/..." and must be
+// equally blocked.
+var leakCategoricallyBlocked = []string{
+	"/System/",
+	"/Library/",
+	"/usr/",
+	"/bin/",
+	"/sbin/",
+	"/private/etc/",
+}
+
 // CanDelete returns nil if path is permitted to be removed, or an error
 // describing why it is denied.
 func (s *Safety) CanDelete(path string) error {
@@ -74,4 +91,68 @@ func (s *Safety) CanDelete(path string) error {
 		}
 	}
 	return fmt.Errorf("path %q is outside the allowed roots %v", clean, s.roots)
+}
+
+// CanDeleteLeakTarget is the signature-scoped parallel predicate for leak
+// deletes. Generic CanDelete stays UNCHANGED and keeps hard-blocking all of
+// /private/ — this predicate never widens that wall; it is a separate,
+// NARROWER gate that leak modules use instead of it:
+//
+//   - the path is resolved (abs, symlinks evaluated, cleaned) and the
+//     RESOLVED path must exactly match one of the signature's globs — a
+//     matched LEAF. A glob's parent directory never matches a full pattern,
+//     so parents are structurally rejected, and a symlink pointing outside
+//     the signature's shape resolves away from the glob and is rejected too;
+//   - /System/, /Library/, /usr/, /bin/, /sbin/ are categorically rejected
+//     (checked both before and after symlink resolution), even if a
+//     misauthored signature glob were to match inside them;
+//   - the caller-supplied blocklist (e.g. ".git") still applies.
+//
+// SECURITY-SENSITIVE: keep this narrow. It exists so the flagship Chrome
+// code_sign_clone fix can ship an Apply without weakening the general wall.
+func (s *Safety) CanDeleteLeakTarget(path string, sigGlobs []string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("absolutize %q: %w", path, err)
+	}
+	if err := leakCategoricalCheck(filepath.Clean(abs)); err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return fmt.Errorf("resolve %q: %w — refusing unresolvable leak target", abs, err)
+	}
+	clean := filepath.Clean(resolved)
+	if err := leakCategoricalCheck(clean); err != nil {
+		return err
+	}
+
+	for _, b := range s.blocked {
+		for _, part := range strings.Split(clean, string(filepath.Separator)) {
+			if part == b {
+				return fmt.Errorf("path %q contains blocked component %q", clean, b)
+			}
+		}
+	}
+
+	for _, g := range sigGlobs {
+		ok, err := filepath.Match(g, clean)
+		if err != nil {
+			continue // malformed pattern can never authorize anything
+		}
+		if ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("resolved path %q matches no leak-signature glob %v — only glob-matched leaf paths are deletable", clean, sigGlobs)
+}
+
+func leakCategoricalCheck(clean string) error {
+	p := clean + "/"
+	for _, b := range leakCategoricallyBlocked {
+		if len(p) >= len(b) && strings.EqualFold(p[:len(b)], b) {
+			return fmt.Errorf("leak target %q is in categorically-blocked system area %q", clean, b)
+		}
+	}
+	return nil
 }
