@@ -50,7 +50,7 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	log.Printf("tick start: trigger=%s", trigger)
 
 	// Step 1: walk the filesystem -> populate fresh data.
-	if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots}, d.store); err != nil {
+	if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots, Caches: d.cfg.Scan.CacheRoots}, d.store); err != nil {
 		log.Printf("tick: scan: %v", err)
 	}
 

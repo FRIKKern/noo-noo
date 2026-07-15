@@ -163,6 +163,54 @@ mem_high_ratio = 0.95
 	}
 }
 
+func TestScanCacheRootsDefaults(t *testing.T) {
+	t.Setenv("HOME", "/tmp/fakehome")
+	dir := t.TempDir()
+	cfg, err := Load(filepath.Join(dir, "nope.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/tmp/fakehome/Library/Caches",
+		"/tmp/fakehome/.npm",
+		"/private/tmp",
+	}
+	if len(cfg.Scan.CacheRoots) != len(want) {
+		t.Fatalf("CacheRoots = %v, want %v", cfg.Scan.CacheRoots, want)
+	}
+	for i := range want {
+		if cfg.Scan.CacheRoots[i] != want[i] {
+			t.Errorf("CacheRoots[%d] = %q, want %q", i, cfg.Scan.CacheRoots[i], want[i])
+		}
+	}
+}
+
+func TestScanCacheRootsUserOverrideAndTilde(t *testing.T) {
+	t.Setenv("HOME", "/tmp/fakehome")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := []byte(`
+[scan]
+cache_roots = ["~/Library/Caches/yarn", "/var/tmp"]
+`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/tmp/fakehome/Library/Caches/yarn", "/var/tmp"}
+	if len(cfg.Scan.CacheRoots) != len(want) {
+		t.Fatalf("CacheRoots = %v, want %v", cfg.Scan.CacheRoots, want)
+	}
+	for i := range want {
+		if cfg.Scan.CacheRoots[i] != want[i] {
+			t.Errorf("CacheRoots[%d] = %q, want %q (tilde must expand)", i, cfg.Scan.CacheRoots[i], want[i])
+		}
+	}
+}
+
 func TestOffloadDefaultsDisabled(t *testing.T) {
 	dir := t.TempDir()
 	cfg, err := Load(filepath.Join(dir, "nope.toml"))

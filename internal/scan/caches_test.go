@@ -6,58 +6,17 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/FRIKKern/noo-noo/internal/sizer"
 )
 
-func TestWalkSize(t *testing.T) {
-	tmp := t.TempDir()
-	// Three files of known sizes, two nested.
-	sizes := map[string]int64{"a": 100, "b/c": 200, "b/d/e": 300}
-	var want int64
-	for p, n := range sizes {
-		full := filepath.Join(tmp, p)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, make([]byte, n), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		want += n
-	}
-	got, err := walkSize(context.Background(), tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Errorf("walkSize = %d, want %d", got, want)
-	}
-}
-
-func TestWalkSizeSkipsSymlinks(t *testing.T) {
-	tmp := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmp, "real"), make([]byte, 100), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("/etc/hosts", filepath.Join(tmp, "link")); err != nil {
-		t.Skip(err)
-	}
-	got, _ := walkSize(context.Background(), tmp)
-	if got != 100 {
-		t.Errorf("walkSize = %d, want 100 (symlink skipped)", got)
-	}
-}
-
-func TestWalkSizeMissingRoot(t *testing.T) {
-	_, err := walkSize(context.Background(), "/this/really/does/not/exist")
-	if err == nil {
-		t.Fatal("expected error for missing root")
-	}
-}
-
-// TestScanCachesWritesSample asserts a sample is recorded for each cache root
-// and is retrievable via CacheSizeSeries.
+// TestScanCachesWritesSample asserts a sample is recorded for each cache root,
+// is retrievable via CacheSizeSeries, and carries ALLOCATED bytes (sizer.Blocks
+// — st_blocks*512), not the old logical st_size sum. A 1000-byte file occupies
+// at least one 4 KiB block, so allocated > logical proves walkSize is gone.
 func TestScanCachesWritesSample(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmp, "blob"), make([]byte, 1024), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "blob"), make([]byte, 1000), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -74,8 +33,21 @@ func TestScanCachesWritesSample(t *testing.T) {
 	if len(samples) != 1 {
 		t.Fatalf("expected 1 sample, got %d", len(samples))
 	}
-	if samples[0].Bytes != 1024 {
-		t.Errorf("bytes = %d, want 1024", samples[0].Bytes)
+	// The recorded value is exactly what sizer.Blocks reports — allocated
+	// bytes, block-aligned, and strictly greater than the 1000 logical bytes
+	// the retired walkSize would have summed.
+	want, err := sizer.Blocks(tmp)
+	if err != nil {
+		t.Fatalf("sizer.Blocks: %v", err)
+	}
+	if samples[0].Bytes != want.Blocks {
+		t.Errorf("bytes = %d, want allocated %d", samples[0].Bytes, want.Blocks)
+	}
+	if samples[0].Bytes <= 1000 {
+		t.Errorf("bytes = %d, want > 1000 (allocated exceeds logical; walkSize would return 1000)", samples[0].Bytes)
+	}
+	if samples[0].Bytes%512 != 0 {
+		t.Errorf("bytes = %d, want a multiple of 512 (allocated blocks)", samples[0].Bytes)
 	}
 	if samples[0].TargetPath != tmp {
 		t.Errorf("target = %q, want %q", samples[0].TargetPath, tmp)

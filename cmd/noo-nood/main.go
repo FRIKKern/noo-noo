@@ -243,15 +243,17 @@ func (d *Daemon) runScheduler(ctx context.Context, trig chan<- TickTrigger) {
 }
 
 // runPressureWatcher runs the sustained-high-pressure sampler and posts a
-// pressure trigger when it fires. Uses defaults that match the
-// internal/pressure package's design (5 GB low-disk, 95% mem-high, 30 s
-// debounce window with a 5 min internal cooldown).
+// pressure trigger when it fires. The thresholds come straight from
+// cfg.Pressure — the config defaults (mem 0.85, disk 10 GB, 15 s sample,
+// 60 s debounce) are the live values, and a user's [pressure] overrides
+// take effect without a code change. Seconds are widened to Durations here,
+// the single conversion point between the TOML surface and pressure.Watch.
 func (d *Daemon) runPressureWatcher(ctx context.Context, trig chan<- TickTrigger) {
 	th := pressure.Threshold{
-		MemHighRatio:   0.95,
-		DiskLowGB:      5,
-		SampleInterval: 10 * time.Second,
-		DebounceWindow: 30 * time.Second,
+		MemHighRatio:   d.cfg.Pressure.MemHighRatio,
+		DiskLowGB:      d.cfg.Pressure.DiskLowGB,
+		SampleInterval: time.Duration(d.cfg.Pressure.SampleIntervalSeconds) * time.Second,
+		DebounceWindow: time.Duration(d.cfg.Pressure.DebounceSeconds) * time.Second,
 	}
 	pressure.Watch(ctx, th, func() {
 		log.Printf("pressure: sustained-high; firing out-of-band scan")
@@ -277,7 +279,7 @@ func (d *Daemon) runScan(ctx context.Context, triggers ...TickTrigger) {
 	}
 	log.Printf("scheduler: running scan (trigger=%s)", trigger)
 
-	if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots}, d.store); err != nil {
+	if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots, Caches: d.cfg.Scan.CacheRoots}, d.store); err != nil {
 		log.Printf("scheduler: scan: %v", err)
 	}
 

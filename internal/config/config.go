@@ -87,6 +87,11 @@ type NotifyCfg struct {
 
 type ScanCfg struct {
 	Roots []string `toml:"roots"`
+	// CacheRoots are the top-level cache directories the velocity heuristic
+	// samples each tick. Without at least one entry the whole cache pipeline
+	// (scan → cache_size_history → CacheVelocity) records nothing and never
+	// fires. Tilde-expanded at Load, exactly like Roots.
+	CacheRoots []string `toml:"cache_roots"`
 }
 
 // Defaults returns a Config populated with the compiled-in default values.
@@ -116,6 +121,11 @@ func Defaults() Config {
 		},
 		Scan: ScanCfg{
 			Roots: []string{filepath.Join(home, "Documents", "GitHub")},
+			CacheRoots: []string{
+				filepath.Join(home, "Library", "Caches"),
+				filepath.Join(home, ".npm"),
+				"/private/tmp",
+			},
 		},
 		Pressure: PressureCfg{
 			SampleIntervalSeconds: 15,
@@ -156,6 +166,9 @@ func Load(path string) (Config, error) {
 	cfg.Offload.DestRoot = expandTilde(cfg.Offload.DestRoot)
 	for i, r := range cfg.Scan.Roots {
 		cfg.Scan.Roots[i] = expandTilde(r)
+	}
+	for i, r := range cfg.Scan.CacheRoots {
+		cfg.Scan.CacheRoots[i] = expandTilde(r)
 	}
 	return cfg, nil
 }
