@@ -19,7 +19,9 @@ var schemaSQL string
 
 // currentSchemaVersion is the version applied by schema.sql. Bump when adding
 // new migration files; schema.sql then becomes the union of all of them.
-const currentSchemaVersion = 1
+// v2 folded the former 0005_auto_clean_events.sql migration into schema.sql so
+// the auto_clean_events DDL lives in exactly one place.
+const currentSchemaVersion = 2
 
 // Store is the noo-noo SQLite handle. Safe for concurrent use; under the hood
 // modernc.org/sqlite serializes writes via a single connection by default.

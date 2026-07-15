@@ -13,10 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// memEventStore is a SQLite-backed EventStore used in tests. The schema
-// it loads is the same migration the daemon ships in production
-// (internal/store/migrations/0005_auto_clean_events.sql), so the tests
-// also serve as a smoke check that the migration parses.
+// memEventStore is a SQLite-backed EventStore used in tests. The schema it
+// loads is the same schema.sql the daemon ships in production
+// (internal/store/schema.sql — the single home of the auto_clean_events DDL),
+// so the tests also serve as a smoke check that the schema parses.
 type memEventStore struct {
 	db *sql.DB
 }
@@ -29,13 +29,13 @@ func newMemEventStore(t *testing.T) *memEventStore {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	migPath := filepath.Join("..", "store", "migrations", "0005_auto_clean_events.sql")
-	mig, err := os.ReadFile(migPath)
+	schemaPath := filepath.Join("..", "store", "schema.sql")
+	schema, err := os.ReadFile(schemaPath)
 	if err != nil {
-		t.Fatalf("read migration: %v", err)
+		t.Fatalf("read schema: %v", err)
 	}
-	if _, err := db.Exec(string(mig)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	if _, err := db.Exec(string(schema)); err != nil {
+		t.Fatalf("apply schema: %v", err)
 	}
 	return &memEventStore{db: db}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/store"
 )
 
 // AutoCleanEvent is one row in the auto_clean_events table. The autoclean
@@ -17,29 +18,16 @@ import (
 // and updates it after (outcome=deleted | skipped | errored). The pre-row
 // is the crash pivot: a daemon crash mid-delete still leaves a forensic
 // trail.
-type AutoCleanEvent struct {
-	StartedAtUnix      int64
-	EndedAtUnix        int64
-	Trigger            string // 'daily' | 'manual'
-	Outcome            string // 'in_progress' | 'deleted' | 'skipped' | 'errored'
-	SkipReason         string
-	TargetPath         string
-	Module             string
-	TargetSizeBytes    int64
-	FreedBytes         int64
-	IdleDaysAtDecision int
-	SuggestionID       string
-	ErrorMsg           string
-}
+//
+// The canonical struct lives in internal/store (which owns the row shape and
+// the DDL); this alias keeps every autoclean.AutoCleanEvent call site working
+// while letting *store.Store satisfy EventStore without an import cycle (store
+// cannot import autoclean, but autoclean already depends on store).
+type AutoCleanEvent = store.AutoCleanEvent
 
 // AutoCleanEventUpdate carries the post-delete fields written into an
-// already-recorded row.
-type AutoCleanEventUpdate struct {
-	EndedAtUnix int64
-	Outcome     string
-	FreedBytes  int64
-	ErrorMsg    string
-}
+// already-recorded row. Aliased to the canonical store type (see above).
+type AutoCleanEventUpdate = store.AutoCleanEventUpdate
 
 // EventStore is the narrow audit-write surface autoclean needs from the
 // store. The real *store.Store satisfies this; tests use an in-memory

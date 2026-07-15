@@ -9,10 +9,9 @@
 //     triggers both fan into a single tick channel; the consumer dispatches
 //     to runTickFn (a function variable that tick.go swaps to the
 //     autoclean-aware body once T95 lands).
-//   - Auto-clean writes its audit rows into auto_clean_events, a table not
-//     present in the embedded schema.sql. applyMigrations runs the 0005
-//     migration inline at boot so the daemon does not depend on an external
-//     migration runner.
+//   - Auto-clean writes its audit rows into auto_clean_events, which is part
+//     of the embedded schema.sql (store schema v2). store.Open creates it on
+//     boot, so the daemon needs no external migration runner.
 //
 // Resource budget: idle <30 MB RSS, <0.1% CPU. The scheduler is one
 // time.Timer; the pressure watcher is a single time.Ticker; no busy loops
@@ -159,11 +158,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 			StartedAt: func() time.Time { return d.started },
 			Version:   version,
 		},
-		// stats=nil: the store does not yet implement
-		// AutoCleanStatsSince. Status returns zero deletion counters in
-		// that case rather than erroring (see autoclean_method.go). save=nil:
-		// Toggle persists in memory only for now; restart re-reads TOML.
-		AutoClean: ipc.NewAutoCleanService(&acSnap, nil, nil),
+		// stats=d.store: *store.Store implements AutoCleanStatsSince, so
+		// AutoClean.Status reports the real 7-day deletion count and freed
+		// bytes from the auto_clean_events ledger (zero, honestly, until the
+		// first daily auto-clean runs). save=nil: Toggle persists in memory
+		// only for now (backlog nn-bl-toggle-persist); restart re-reads TOML.
+		AutoClean: ipc.NewAutoCleanService(&acSnap, d.store, nil),
 	}
 	srv := ipc.NewServer(d.cfg.Daemon.SocketPath, handlers)
 	if err := srv.Start(ctx); err != nil {
@@ -358,36 +358,15 @@ func nextTickAt(now time.Time, hour int) time.Time {
 	return candidate
 }
 
-// applyAutoCleanMigration creates the auto_clean_events table inline. The
-// embedded schema.sql in internal/store does not yet include it (that
-// table arrived in Phase 0.5 as 0005_auto_clean_events.sql), so until the
-// store package grows a generic migration runner the daemon applies just
-// this one migration at boot. CREATE IF NOT EXISTS makes it idempotent.
-func applyAutoCleanMigration(st *store.Store) error {
-	const stmt = `
-CREATE TABLE IF NOT EXISTS auto_clean_events (
-    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at_unix        INTEGER NOT NULL,
-    ended_at_unix          INTEGER,
-    trigger                TEXT NOT NULL,
-    outcome                TEXT NOT NULL,
-    skip_reason            TEXT,
-    target_path            TEXT NOT NULL,
-    module                 TEXT NOT NULL,
-    target_size_bytes      INTEGER NOT NULL,
-    freed_bytes            INTEGER NOT NULL DEFAULT 0,
-    idle_days_at_decision  INTEGER NOT NULL DEFAULT 0,
-    suggestion_id          TEXT NOT NULL,
-    error_msg              TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_auto_clean_started ON auto_clean_events(started_at_unix);
-CREATE INDEX IF NOT EXISTS idx_auto_clean_outcome ON auto_clean_events(outcome);
-`
-	if _, err := st.DB().Exec(stmt); err != nil {
-		return fmt.Errorf("apply 0005 auto_clean_events: %w", err)
-	}
-	return nil
-}
+// Compile-time assertions that *store.Store satisfies both audit interfaces:
+// EventStore (autoclean writes its before/after rows through it) and
+// AutoCleanStatsStore (the IPC AutoClean.Status read side). Anchored here, at
+// the single wiring site, so a signature drift on either surface fails
+// `go vet`/build rather than surfacing at runtime.
+var (
+	_ autoclean.EventStore    = (*store.Store)(nil)
+	_ ipc.AutoCleanStatsStore = (*store.Store)(nil)
+)
 
 func main() {
 	home, _ := os.UserHomeDir()
@@ -404,10 +383,6 @@ func main() {
 		log.Fatalf("open store: %v", err)
 	}
 	defer func() { _ = st.Close() }()
-
-	if err := applyAutoCleanMigration(st); err != nil {
-		log.Fatalf("migrate: %v", err)
-	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
