@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
 	"github.com/FRIKKern/noo-noo/internal/notify"
 	"github.com/FRIKKern/noo-noo/internal/scan"
-	"github.com/FRIKKern/noo-noo/internal/store"
 )
 
 // init swaps the package-level runTickFn (defined in main.go) so the tick
@@ -127,7 +125,7 @@ func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion 
 // Returns (freed bytes, count of successful deletes).
 func (d *Daemon) runAutoClean(ctx context.Context, cfg autoclean.Config, suggestions []heuristics.Suggestion) (int64, int) {
 	safety := core.NewSafety(d.cfg.Scan.Roots, []string{".git"})
-	eng := autoclean.New(newSQLEventStore(d.store), cfg, d.cfg.Scan.Roots, safety, map[string]autoclean.Deleter{
+	eng := autoclean.New(d.store, cfg, d.cfg.Scan.Roots, safety, map[string]autoclean.Deleter{
 		"dev": autoclean.DefaultDeleter,
 	})
 	budget := autoclean.NewBudget(cfg.SizeCapPerTickGB)
@@ -197,52 +195,9 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.1f %s", f, units[u])
 }
 
-// sqlEventStore adapts *sql.DB to autoclean.EventStore. Used so the
-// daemon can hand a real store to autoclean.New without widening the
-// internal/store public surface for what's really an autoclean-private
-// audit table. T97 (or a follow-up) may move this onto *store.Store
-// directly; for now keeping it in tick.go avoids a cross-package change
-// outside this task's verifier arm.
-//
-// Currently unused at runtime (autoCleanCfgFn returns Enabled=false, so
-// autoclean.New is never called via this adapter); kept here so T97 can
-// flip the switch without re-introducing the type.
-type sqlEventStore struct{ db *sql.DB }
-
-func newSQLEventStore(st *store.Store) sqlEventStore { return sqlEventStore{db: st.DB()} }
-
-func (s sqlEventStore) RecordAutoCleanEvent(e autoclean.AutoCleanEvent) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO auto_clean_events
-		(started_at_unix, ended_at_unix, trigger, outcome, skip_reason, target_path, module,
-		 target_size_bytes, freed_bytes, idle_days_at_decision, suggestion_id, error_msg)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.StartedAtUnix, nullableEnded(e.EndedAtUnix), e.Trigger, e.Outcome, e.SkipReason,
-		e.TargetPath, e.Module, e.TargetSizeBytes, e.FreedBytes, e.IdleDaysAtDecision,
-		e.SuggestionID, e.ErrorMsg)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func (s sqlEventStore) UpdateAutoCleanEvent(id int64, u autoclean.AutoCleanEventUpdate) error {
-	_, err := s.db.Exec(`UPDATE auto_clean_events
-		SET ended_at_unix = ?, outcome = ?, freed_bytes = ?, error_msg = ?
-		WHERE id = ?`,
-		u.EndedAtUnix, u.Outcome, u.FreedBytes, u.ErrorMsg, id)
-	return err
-}
-
-func nullableEnded(v int64) any {
-	if v == 0 {
-		return nil
-	}
-	return v
-}
-
-// Compile-time assertion: sqlEventStore satisfies autoclean.EventStore.
-// Caught here rather than at the eng := autoclean.New(...) site so a
-// signature drift surfaces in `go vet`, not at runtime. The blank-name
-// assignment is a standard Go idiom for "use this var only for its
-// type-check side effect."
-var _ autoclean.EventStore = sqlEventStore{}
+// The auto_clean_events audit writes now go straight through *store.Store
+// (see internal/store/autoclean_events.go), which satisfies
+// autoclean.EventStore directly. The former tick.go sqlEventStore adapter —
+// and its inline INSERT/UPDATE SQL — is gone: the DDL and the queries live in
+// exactly one place. The compile-time assertion that *store.Store implements
+// EventStore lives in main.go, next to the wiring that passes it in.

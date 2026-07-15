@@ -2,7 +2,11 @@ package ipc
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/FRIKKern/noo-noo/internal/store"
 )
 
 // fakeStats is the tiny test double for AutoCleanStatsStore.
@@ -118,6 +122,46 @@ func TestAutoCleanStatus_RendersConfigSnapshot(t *testing.T) {
 	}
 	if resp.Deletions7d != 3 || resp.FreedBytes7d != 9000 {
 		t.Errorf("stats not threaded through: %+v", resp)
+	}
+}
+
+// TestAutoCleanStatus_ReadsRealStore proves the read path is LIVE end-to-end:
+// a real *store.Store (the same type main.go wires in at the AutoCleanService
+// call site) seeded with 'deleted' audit rows makes Status report non-zero
+// Deletions7d / FreedBytes7d — no fake double. This is the regression guard
+// for the old bug where stats was nil and Status always returned zeros.
+func TestAutoCleanStatus_ReadsRealStore(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Now().Unix()
+	for _, freed := range []int64{1500, 2500} {
+		if _, err := st.RecordAutoCleanEvent(store.AutoCleanEvent{
+			StartedAtUnix: now, EndedAtUnix: now, Trigger: "daily", Outcome: "deleted",
+			TargetPath: "/repo/node_modules", Module: "dev", TargetSizeBytes: freed,
+			FreedBytes: freed, SuggestionID: "1",
+		}); err != nil {
+			t.Fatalf("seed deleted row: %v", err)
+		}
+	}
+
+	// *store.Store must satisfy AutoCleanStatsStore — this assignment is the
+	// call-site proof of the interface the compile assertion in main.go names.
+	var stats AutoCleanStatsStore = st
+	svc := NewAutoCleanService(&AutoCleanConfig{Enabled: true}, stats, nil)
+
+	var resp AutoCleanStatusResponse
+	if err := svc.Status(AutoCleanStatusRequest{}, &resp); err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if resp.Deletions7d != 2 {
+		t.Errorf("Deletions7d = %d, want 2", resp.Deletions7d)
+	}
+	if resp.FreedBytes7d != 4000 {
+		t.Errorf("FreedBytes7d = %d, want 4000 (1500+2500)", resp.FreedBytes7d)
 	}
 }
 
