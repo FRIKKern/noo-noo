@@ -19,6 +19,12 @@ import (
 // data lives on, elsewhere.
 var ErrDeleteForbidden = errors.New("offload: delete is forbidden — this module only relocates")
 
+// ErrStopGate wraps a stop-gate refusal so callers can distinguish "the
+// owning app is running" (a DEFERRABLE condition — the relocation queue may
+// retry at a safe moment, with consent) from every other Apply failure.
+// Match with errors.Is.
+var ErrStopGate = errors.New("stop-gate refused")
+
 // Config pins the offload destination. Both fields empty (the default)
 // means offload is disabled: scans still report, Plan emits nothing.
 type Config struct {
@@ -306,7 +312,7 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 			return fail(fmt.Errorf("offload: stop-gate check for %q failed: %w", pb.StopGate, err))
 		}
 		if running {
-			return fail(fmt.Errorf("offload: stop-gate: %q is running — stop it and retry", pb.StopGate))
+			return fail(fmt.Errorf("offload: %w: %q is running — stop it and retry (or queue with --defer)", ErrStopGate, pb.StopGate))
 		}
 	}
 

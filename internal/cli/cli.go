@@ -53,8 +53,10 @@ Commands:
   dev     [list|clean]     Manage build artifacts under scan roots
   leaks   [list|scan|clean]
                            Find known leak classes (truth-sized, lsof-gated)
-  offload [scan|plan|apply]
+  offload [scan|plan|apply|pending|run-pending|cancel]
                            Offload bulky assets to a pinned external volume
+                           (stop-gated applies can be queued with --defer and
+                           re-checked later via run-pending)
 
 Global flags:
   -y         Skip confirmation prompts
