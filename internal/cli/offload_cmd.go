@@ -40,13 +40,9 @@ func offloadCmd(ctx context.Context, app *App, args []string) int {
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	yes := fs.Bool("y", false, "skip confirmation")
 	dryRun := fs.Bool("dry-run", false, "show what would happen")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		_, _ = fmt.Fprintln(app.Err, "Usage: noo-noo offload [scan|plan|apply]")
-		return 2
+	verb, code, ok := parseVerb(app, fs, args, "Usage: noo-noo offload [scan|plan|apply]")
+	if !ok {
+		return code
 	}
 	m := newOffloadModule()
 
@@ -55,7 +51,7 @@ func offloadCmd(ctx context.Context, app *App, args []string) int {
 		_, _ = fmt.Fprintln(app.Err, "scan:", err)
 		return 1
 	}
-	switch rest[0] {
+	switch verb {
 	case "scan":
 		_ = PrintReport(app.Out, rep, *asJSON)
 		if !*asJSON {
@@ -111,7 +107,7 @@ func offloadCmd(ctx context.Context, app *App, args []string) int {
 		}
 		return exit
 	default:
-		_, _ = fmt.Fprintf(app.Err, "unknown offload subcommand %q\n", rest[0])
+		_, _ = fmt.Fprintf(app.Err, "unknown offload subcommand %q\n", verb)
 		return 2
 	}
 }
