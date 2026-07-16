@@ -361,3 +361,64 @@ func TestRunPendingRejectsForbiddenTriggers(t *testing.T) {
 		t.Fatalf("forbidden trigger touched the source: %v %v", fi, err)
 	}
 }
+
+// TestRunPendingPathGatedSubAsset pins the review integration of D19 + D24:
+// a PATH-gated sub-asset (the claude-jobs shape — cold subdir of a live
+// parent) is exactly as deferrable as a process-gated asset. Apply's
+// path-gate refusal is a matchable ErrStopGate (so the CLI offers queueing),
+// RunPending re-probes the SUBTREE fresh (blocked while anything holds it
+// open), and the entry applies the moment the probe reports clear.
+func TestRunPendingPathGatedSubAsset(t *testing.T) {
+	home, asset, destRoot, cfg, _ := fixture(t, "", false)
+	pbs := []Playbook{{
+		AssetID: "asset",
+		Path:    "~/asset",
+		Class:   ClassRelocate,
+		Gate:    GatePath,
+	}}
+	probe := &fakePathProbe{live: true, proof: "lsof +D: 2 open file(s) — fail-safe LIVE"}
+	m := New(cfg, pbs, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy, PathProbe: probe.probe})
+	qs := openQueueStore(t)
+
+	// The path-gate refusal must be deferrable: matchable via ErrStopGate.
+	_, err := m.Apply(context.Background(), modules.Action{
+		Module: "offload", Op: "relocate", Target: asset,
+		Destination: filepath.Join(destRoot, "asset"),
+	})
+	if !errors.Is(err, ErrStopGate) {
+		t.Fatalf("path-gate refusal must be errors.Is(ErrStopGate) so it can be queued, got %v", err)
+	}
+	id, err := m.EnqueueDeferred(qs, modules.Action{Module: "offload", Op: "relocate", Target: asset}, err.Error(), time.Unix(1000, 0))
+	if err != nil {
+		t.Fatalf("EnqueueDeferred(path-gated): %v", err)
+	}
+
+	// Still held open: re-check must re-probe the subtree and stay blocked.
+	results, err := m.RunPending(context.Background(), qs, TriggerPendingManual, -1, nil)
+	if err != nil {
+		t.Fatalf("RunPending: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != PendingBlocked ||
+		!strings.Contains(results[0].Reason, "path-gate") {
+		t.Fatalf("want path-gate blocked, got %+v", results)
+	}
+
+	// Gate clears: the queued relocation applies for real (copy → swap →
+	// symlink) and the row goes terminal with freed bytes recorded.
+	probe.live = false
+	probe.proof = "no process holds any file open"
+	results, err = m.RunPending(context.Background(), qs, TriggerPendingManual, -1, nil)
+	if err != nil {
+		t.Fatalf("RunPending after clear: %v", err)
+	}
+	if len(results) != 1 || results[0].Outcome != PendingApplied {
+		t.Fatalf("want applied after path-gate cleared, got %+v", results)
+	}
+	if fi, err := os.Lstat(asset); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("source should now be a symlink to the relocated copy: %v %v", fi, err)
+	}
+	row, err := qs.GetRelocation(id)
+	if err != nil || row.Status != store.RelocApplied {
+		t.Fatalf("queue row not terminal-applied: %+v %v", row, err)
+	}
+}

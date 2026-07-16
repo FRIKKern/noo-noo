@@ -192,8 +192,15 @@ func (m *Module) recheckOne(ctx context.Context, qs QueueStore, e RelocationQueu
 		return block(fmt.Sprintf("source %q is missing or no longer a real directory", e.TargetPath), err)
 	}
 
-	// Gate 3: fresh stop-gate — the reason the entry was queued.
-	if pb.StopGate != "" {
+	// Gate 3: fresh liveness gate — the reason the entry was queued. Same
+	// dispatch as Apply (charter D19): a path-gated sub-asset re-probes its
+	// own subtree for open files (fail-safe: doubt = live = blocked); a
+	// process-gated asset re-checks its stop-gate process.
+	if pb.pathGated() {
+		if live, proof := m.pathProbe(ctx, e.TargetPath); live {
+			return block(fmt.Sprintf("path-gate: %q still in use — %s", e.TargetPath, proof), nil)
+		}
+	} else if pb.StopGate != "" {
 		running, err := m.procs.Running(ctx, pb.StopGate)
 		if err != nil {
 			return block(fmt.Sprintf("stop-gate check for %q failed: %v", pb.StopGate, err), err)

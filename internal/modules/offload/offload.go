@@ -328,9 +328,12 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 	if pb.pathGated() {
 		// Path-gate: probe the target subtree for open files instead of a
 		// named process. Fail-safe — the prober reports live=true whenever
-		// emptiness cannot be proven (missing lsof, timeout, error).
+		// emptiness cannot be proven (missing lsof, timeout, error). Wrapped
+		// in ErrStopGate: "something still holds it open" is exactly as
+		// deferrable as a running stop-gate process — the queue re-checks
+		// the same gate fresh at the next safe moment.
 		if live, proof := m.pathProbe(ctx, a.Target); live {
-			return fail(fmt.Errorf("offload: path-gate: %q is in use — %s (close what holds it open and retry)", a.Target, proof))
+			return fail(fmt.Errorf("offload: %w: %q is in use — %s (close what holds it open and retry, or queue with --defer)", ErrStopGate, a.Target, proof))
 		}
 	} else if pb.StopGate != "" {
 		running, err := m.procs.Running(ctx, pb.StopGate)

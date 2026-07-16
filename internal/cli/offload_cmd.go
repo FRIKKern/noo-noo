@@ -167,14 +167,27 @@ func offloadScanPlanApply(ctx context.Context, app *App, cfg config.Config, m *o
 // full fresh gate set. Returns true when the action ended in a queued row.
 func offloadOfferQueue(app *App, cfg config.Config, m *offload.Module, a modules.Action, gateReason string, consented bool) bool {
 	gateName := "the blocking app"
-	if pb, ok := m.PlaybookFor(a.Target); ok && pb.StopGate != "" {
-		gateName = fmt.Sprintf("%q", pb.StopGate)
+	clearCondition := fmt.Sprintf("%s is no longer running", gateName)
+	afterAction := fmt.Sprintf("after quitting %s", gateName)
+	if pb, ok := m.PlaybookFor(a.Target); ok {
+		switch {
+		case pb.Gate == offload.GatePath:
+			// Path-gated sub-asset: no single process to quit — the gate
+			// clears when nothing holds files open under the target.
+			gateName = "whatever holds it open"
+			clearCondition = fmt.Sprintf("nothing holds files open under %s", a.Target)
+			afterAction = "after closing what holds it open"
+		case pb.StopGate != "":
+			gateName = fmt.Sprintf("%q", pb.StopGate)
+			clearCondition = fmt.Sprintf("%s is no longer running", gateName)
+			afterAction = fmt.Sprintf("after quitting %s", gateName)
+		}
 	}
 	if consented {
 		_, _ = fmt.Fprintln(app.Out, "(--defer specified: queueing for a later safe moment)")
 	} else if !Confirm(offloadStdin, app.Out,
-		fmt.Sprintf("Queue %s for automatic retry once %s is no longer running?", a.Target, gateName), false) {
-		_, _ = fmt.Fprintf(app.Out, "Not queued. Re-run `noo-noo offload apply` after quitting %s, or pass --defer to queue.\n", gateName)
+		fmt.Sprintf("Queue %s for automatic retry once %s?", a.Target, clearCondition), false) {
+		_, _ = fmt.Fprintf(app.Out, "Not queued. Re-run `noo-noo offload apply` %s, or pass --defer to queue.\n", afterAction)
 		return false
 	}
 	qs, err := offloadQueueStore(cfg)
@@ -189,7 +202,7 @@ func offloadOfferQueue(app *App, cfg config.Config, m *offload.Module, a modules
 		return false
 	}
 	_, _ = fmt.Fprintf(app.Out, "queued (id %d): %s → %s\n", id, a.Target, a.Destination)
-	_, _ = fmt.Fprintf(app.Out, "  run `noo-noo offload run-pending` after quitting %s,\n", gateName)
+	_, _ = fmt.Fprintf(app.Out, "  run `noo-noo offload run-pending` %s,\n", afterAction)
 	_, _ = fmt.Fprintln(app.Out, "  or let the daemon retry on its daily tick by setting BOTH in config.toml:")
 	_, _ = fmt.Fprintln(app.Out, "    [offload]")
 	_, _ = fmt.Fprintln(app.Out, "    auto_apply_pending = true")
