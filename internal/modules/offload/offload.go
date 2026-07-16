@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/FRIKKern/noo-noo/internal/core"
+	"github.com/FRIKKern/noo-noo/internal/leaks"
 	"github.com/FRIKKern/noo-noo/internal/modules"
 )
 
@@ -79,6 +80,9 @@ type Deps struct {
 	Copy  Copier
 	Sizes SizeFns
 	Home  string // user home for ~-expansion; "" → os.UserHomeDir()
+	// PathProbe gates GatePath assets on open files under the target path.
+	// nil → leaks.LsofProbe (fail-safe: doubt/timeout = live = blocked).
+	PathProbe leaks.Prober
 }
 
 // Module implements modules.Module for playbook-driven offload.
@@ -90,6 +94,7 @@ type Module struct {
 	copy      Copier
 	sizes     SizeFns
 	home      string
+	pathProbe leaks.Prober
 }
 
 // New constructs the offload module. playbooks nil → DefaultPlaybooks().
@@ -106,6 +111,9 @@ func New(cfg Config, playbooks []Playbook, d Deps) *Module {
 	if d.Copy == nil {
 		d.Copy = DittoCopy
 	}
+	if d.PathProbe == nil {
+		d.PathProbe = leaks.LsofProbe
+	}
 	if d.Home == "" {
 		if h, err := os.UserHomeDir(); err == nil {
 			d.Home = h
@@ -121,6 +129,7 @@ func New(cfg Config, playbooks []Playbook, d Deps) *Module {
 		copy:      d.Copy,
 		sizes:     d.Sizes.fill(),
 		home:      d.Home,
+		pathProbe: d.PathProbe,
 	}
 }
 
@@ -177,7 +186,11 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 
 		switch pb.Class {
 		case ClassNativeConfig:
-			ev["native_command"] = pb.NativeCommand
+			// Render the machine-agnostic {dest_root} template against the
+			// configured destination at READ time — an unconfigured dest_root
+			// yields the placeholder, and the verdict above carries the
+			// "configure [offload] dest_root" guidance.
+			ev["native_command"] = renderNativeCommand(pb.NativeCommand, m.cfg.DestRoot)
 			ev["suggestion"] = "use the app's own relocation — noo-noo will not move this (the app would regrow the store at the old path)"
 		case ClassRelocate:
 			if uniq, err := m.sizes.UniqueAllocated(p); err == nil {
@@ -188,8 +201,14 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 			}
 			rep.Total += size
 		}
-		if pb.StopGate != "" {
+		if pb.pathGated() {
+			ev["gate"] = "path"
+		} else if pb.StopGate != "" {
+			ev["gate"] = "process"
 			ev["stop_gate"] = pb.StopGate
+		}
+		if pb.ParentAssetID != "" {
+			ev["parent_asset"] = pb.ParentAssetID
 		}
 		rep.Items = append(rep.Items, modules.Item{Path: p, Size: size, Evidence: ev})
 	}
@@ -300,7 +319,14 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return fail(fmt.Errorf("offload: destination refused: %w", err))
 	}
 
-	if pb.StopGate != "" {
+	if pb.pathGated() {
+		// Path-gate: probe the target subtree for open files instead of a
+		// named process. Fail-safe — the prober reports live=true whenever
+		// emptiness cannot be proven (missing lsof, timeout, error).
+		if live, proof := m.pathProbe(ctx, a.Target); live {
+			return fail(fmt.Errorf("offload: path-gate: %q is in use — %s (close what holds it open and retry)", a.Target, proof))
+		}
+	} else if pb.StopGate != "" {
 		running, err := m.procs.Running(ctx, pb.StopGate)
 		if err != nil {
 			return fail(fmt.Errorf("offload: stop-gate check for %q failed: %w", pb.StopGate, err))
