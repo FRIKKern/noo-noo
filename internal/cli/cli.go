@@ -46,6 +46,10 @@ func (a *App) printUsage() {
 	_, _ = fmt.Fprint(a.Out, `Usage: noo-noo <command> [args]
 
 Commands:
+  status                   Machine storage posture: disk fill rate, external
+                           headroom, offload health, the honest verdict
+  trends                   Growth sparklines, days-until-full forecast, and
+                           recurring leak patterns from recorded history
   report                   Full diagnosis (memory, top processes, big folders)
   startup [list|disable|restore]
                            Manage launchd auto-start services

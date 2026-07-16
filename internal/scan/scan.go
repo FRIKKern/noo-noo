@@ -29,6 +29,10 @@ type Roots struct {
 var (
 	scanReposFn  = func(_ context.Context, _ []string, _ *store.Store) error { return nil }
 	scanCachesFn = func(_ context.Context, _ []string, _ *store.Store) error { return nil }
+	// scanDisksFn records per-volume capacity samples. It takes no roots — it
+	// enumerates volumes itself (boot + /Volumes/*) — so its signature differs
+	// from the root-driven collectors. disks.go installs the real impl.
+	scanDisksFn = func(_ context.Context, _ *store.Store) error { return nil }
 )
 
 // ScanRoots runs the repo-idleness and cache-size collectors over the
@@ -46,6 +50,9 @@ func ScanRoots(ctx context.Context, roots Roots, st *store.Store) error {
 		return err
 	}
 	if err := scanCachesFn(ctx, roots.Caches, st); err != nil {
+		return err
+	}
+	if err := scanDisksFn(ctx, st); err != nil {
 		return err
 	}
 	return nil
