@@ -78,52 +78,59 @@ func orphansCmd(ctx context.Context, app *App, args []string) int {
 		}
 		return 0
 	case "kill":
-		actions := m.Plan(rep)
-		if len(actions) == 0 {
-			_, _ = fmt.Fprintln(app.Out, "Nothing to terminate.")
-			return 0
-		}
-		_ = PrintReport(app.Out, rep, *asJSON)
-		if !*asJSON {
-			printOrphanDetails(app, rep)
-		}
-		if !Confirm(os.Stdin, app.Out,
-			fmt.Sprintf("Terminate %d orphaned automation browser process(es)? (SIGTERM, SIGKILL after a grace period)", len(actions)),
-			*yes) {
-			_, _ = fmt.Fprintln(app.Out, "Aborted.")
-			return 0
-		}
-		log, _ := audit.New(auditDir())
-		defer func() { _ = log.Close() }()
-		killed := 0
-		for _, a := range actions {
-			dir := userDataDirFor(rep, a.Target)
-			if *dryRun {
-				_, _ = fmt.Fprintf(app.Out, "would terminate: pid %s (%s)\n", a.Target, dir)
-				continue
-			}
-			_, err := m.Apply(ctx, a)
-			outcome, errStr := outcomeOf(err)
-			_ = log.Write(audit.Record{
-				Module: "orphans", Op: a.Op, Target: a.Target,
-				Evidence: map[string]string{"user_data_dir": dir},
-				Outcome:  outcome, Error: errStr,
-			})
-			if err == nil {
-				killed++
-				_, _ = fmt.Fprintf(app.Out, "terminated: pid %s (%s)\n", a.Target, dir)
-			} else {
-				_, _ = fmt.Fprintf(app.Err, "refused/failed: pid %s — %v\n", a.Target, err)
-			}
-		}
-		if !*dryRun && killed > 0 {
-			_, _ = fmt.Fprintf(app.Out, "Terminated %d orphaned automation browser(s).\n", killed)
-			_, _ = fmt.Fprintln(app.Out, "Their leaked Chrome code-sign clones are now unpinned — run 'noo-noo leaks clean' to sweep them.")
-		}
-		return 0
+		return orphansKill(ctx, app, m, rep, *asJSON, *yes, *dryRun)
 	default: // unreachable: verb validated above
 		return 2
 	}
+}
+
+// orphansKill plans, confirms, and terminates the orphaned browsers in rep,
+// logging each outcome to the audit trail. Split out of orphansCmd so the
+// dispatcher stays flat.
+func orphansKill(ctx context.Context, app *App, m modules.Module, rep modules.Report, asJSON, yes, dryRun bool) int {
+	actions := m.Plan(rep)
+	if len(actions) == 0 {
+		_, _ = fmt.Fprintln(app.Out, "Nothing to terminate.")
+		return 0
+	}
+	_ = PrintReport(app.Out, rep, asJSON)
+	if !asJSON {
+		printOrphanDetails(app, rep)
+	}
+	if !Confirm(os.Stdin, app.Out,
+		fmt.Sprintf("Terminate %d orphaned automation browser process(es)? (SIGTERM, SIGKILL after a grace period)", len(actions)),
+		yes) {
+		_, _ = fmt.Fprintln(app.Out, "Aborted.")
+		return 0
+	}
+	log, _ := audit.New(auditDir())
+	defer func() { _ = log.Close() }()
+	killed := 0
+	for _, a := range actions {
+		dir := userDataDirFor(rep, a.Target)
+		if dryRun {
+			_, _ = fmt.Fprintf(app.Out, "would terminate: pid %s (%s)\n", a.Target, dir)
+			continue
+		}
+		_, err := m.Apply(ctx, a)
+		outcome, errStr := outcomeOf(err)
+		_ = log.Write(audit.Record{
+			Module: "orphans", Op: a.Op, Target: a.Target,
+			Evidence: map[string]string{"user_data_dir": dir},
+			Outcome:  outcome, Error: errStr,
+		})
+		if err == nil {
+			killed++
+			_, _ = fmt.Fprintf(app.Out, "terminated: pid %s (%s)\n", a.Target, dir)
+		} else {
+			_, _ = fmt.Fprintf(app.Err, "refused/failed: pid %s — %v\n", a.Target, err)
+		}
+	}
+	if !dryRun && killed > 0 {
+		_, _ = fmt.Fprintf(app.Out, "Terminated %d orphaned automation browser(s).\n", killed)
+		_, _ = fmt.Fprintln(app.Out, "Their leaked Chrome code-sign clones are now unpinned — run 'noo-noo leaks clean' to sweep them.")
+	}
+	return 0
 }
 
 // printOrphanDetails renders the per-hit evidence trail in human mode: pid,

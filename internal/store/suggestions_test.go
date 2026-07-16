@@ -35,6 +35,42 @@ func TestSuggestionsLifecycle(t *testing.T) {
 	}
 }
 
+// insertSuggestion inserts sg, failing the test on error, and returns its id.
+// Split out so the recurrence-read test stays flat (gocyclo).
+func insertSuggestion(t *testing.T, s *Store, sg StoredSuggestion) int64 {
+	t.Helper()
+	id, err := s.InsertSuggestion(sg)
+	if err != nil {
+		t.Fatalf("InsertSuggestion: %v", err)
+	}
+	return id
+}
+
+// classifyLeaksHistory walks a ListSuggestionsSince("leaks", …) result: it
+// asserts every row is a leaks row, notes whether the dismissed and open ids
+// appeared, and checks each carries the right DismissedAt nullability.
+func classifyLeaksHistory(t *testing.T, hist []StoredSuggestion, dismissedID, openID int64) (sawDismissed, sawOpen bool) {
+	t.Helper()
+	for _, sg := range hist {
+		if sg.Module != "leaks" {
+			t.Errorf("ListSuggestionsSince leaked a %q row", sg.Module)
+		}
+		switch sg.ID {
+		case dismissedID:
+			sawDismissed = true
+			if sg.DismissedAt == nil {
+				t.Errorf("dismissed row should carry a non-nil DismissedAt")
+			}
+		case openID:
+			sawOpen = true
+			if sg.DismissedAt != nil {
+				t.Errorf("open row should carry a nil DismissedAt")
+			}
+		}
+	}
+	return sawDismissed, sawOpen
+}
+
 // TestListSuggestionsSinceIncludesDismissed is the recurrence-read contract:
 // unlike ListOpenSuggestions, ListSuggestionsSince must return dismissed rows
 // too, because a leak class re-appearing across dismissals IS the pattern
@@ -45,30 +81,22 @@ func TestListSuggestionsSinceIncludesDismissed(t *testing.T) {
 
 	base := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
 	// A leak surfaced last week, then dismissed (cleaned).
-	dismissedID, err := s.InsertSuggestion(StoredSuggestion{
+	dismissedID := insertSuggestion(t, s, StoredSuggestion{
 		Ts: base, Module: "leaks", Target: "/private/var/folders/x/code_sign_clone",
 		Reason: "chrome clone re-leak", Severity: "high",
 	})
-	if err != nil {
-		t.Fatalf("InsertSuggestion: %v", err)
-	}
 	if err := s.DismissSuggestion(dismissedID, base.Add(time.Hour)); err != nil {
 		t.Fatalf("DismissSuggestion: %v", err)
 	}
 	// The same class re-leaked today: a fresh open row.
-	openID, err := s.InsertSuggestion(StoredSuggestion{
+	openID := insertSuggestion(t, s, StoredSuggestion{
 		Ts: base.Add(7 * 24 * time.Hour), Module: "leaks", Target: "/private/var/folders/y/code_sign_clone",
 		Reason: "chrome clone re-leak", Severity: "high",
 	})
-	if err != nil {
-		t.Fatalf("InsertSuggestion: %v", err)
-	}
 	// A different module's row in the window must not appear.
-	if _, err := s.InsertSuggestion(StoredSuggestion{
+	insertSuggestion(t, s, StoredSuggestion{
 		Ts: base.Add(7 * 24 * time.Hour), Module: "dev", Target: "/repo", Reason: "idle", Severity: "low",
-	}); err != nil {
-		t.Fatalf("InsertSuggestion: %v", err)
-	}
+	})
 
 	// The open list omits the dismissed one.
 	open, err := s.ListOpenSuggestions()
@@ -89,24 +117,7 @@ func TestListSuggestionsSinceIncludesDismissed(t *testing.T) {
 	if len(hist) != 2 {
 		t.Fatalf("expected 2 leaks rows (dismissed + open), got %d: %+v", len(hist), hist)
 	}
-	var sawDismissed, sawOpen bool
-	for _, sg := range hist {
-		if sg.Module != "leaks" {
-			t.Errorf("ListSuggestionsSince leaked a %q row", sg.Module)
-		}
-		switch sg.ID {
-		case dismissedID:
-			sawDismissed = true
-			if sg.DismissedAt == nil {
-				t.Errorf("dismissed row should carry a non-nil DismissedAt")
-			}
-		case openID:
-			sawOpen = true
-			if sg.DismissedAt != nil {
-				t.Errorf("open row should carry a nil DismissedAt")
-			}
-		}
-	}
+	sawDismissed, sawOpen := classifyLeaksHistory(t, hist, dismissedID, openID)
 	if !sawDismissed || !sawOpen {
 		t.Fatalf("expected both dismissed and open rows; sawDismissed=%v sawOpen=%v", sawDismissed, sawOpen)
 	}

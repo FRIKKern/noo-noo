@@ -236,7 +236,7 @@ func UniqueAllocated(paths ...string) (TreeSize, error) {
 				return nil
 			}
 			ts.Errs += addFileExtents(f.Fd(), st.Dev, st.Size, set)
-			f.Close()
+			_ = f.Close()
 			return nil
 		})
 		if err != nil {

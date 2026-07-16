@@ -44,6 +44,66 @@ func enqueueViaGate(t *testing.T, m *Module, qs QueueStore, asset, destRoot stri
 	return id
 }
 
+// requireResults fails unless RunPending returned no error and exactly want
+// results. Split out so the pending tests stay flat (gocyclo).
+func requireResults(t *testing.T, results []PendingResult, err error, want int) []PendingResult {
+	t.Helper()
+	if err != nil || len(results) != want {
+		t.Fatalf("RunPending: %v (results %v)", err, results)
+	}
+	return results
+}
+
+// requireSingleResult fails unless RunPending returned exactly one result, and
+// returns it.
+func requireSingleResult(t *testing.T, results []PendingResult, err error) PendingResult {
+	t.Helper()
+	return requireResults(t, results, err, 1)[0]
+}
+
+// twoRelocatableAssets builds home with two relocate-class asset dirs (each a
+// 100-byte file) gated on the process "app", plus the matching offload config
+// and playbooks.
+func twoRelocatableAssets(t *testing.T) (home, destRoot string, assets []string, cfg Config, pbs []Playbook) {
+	t.Helper()
+	home = t.TempDir()
+	destRoot = filepath.Join(t.TempDir(), "offload")
+	if err := os.MkdirAll(destRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	assets = make([]string, 2)
+	for i := range assets {
+		name := fmt.Sprintf("asset%d", i)
+		assets[i] = filepath.Join(home, name)
+		if err := os.MkdirAll(assets[i], 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(assets[i], "f.bin"), []byte(strings.Repeat("x", 100)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pbs = append(pbs, Playbook{AssetID: name, Path: "~/" + name, Class: ClassRelocate, StopGate: "app"})
+	}
+	cfg = Config{DestRoot: destRoot, DestVolumeUUID: "u1"}
+	return home, destRoot, assets, cfg, pbs
+}
+
+// requireLiveDir fails unless path is a real directory — the "source untouched"
+// invariant every blocked or budget-skipped re-check must preserve.
+func requireLiveDir(t *testing.T, path, msg string) {
+	t.Helper()
+	if fi, err := os.Lstat(path); err != nil || !fi.IsDir() {
+		t.Fatalf("%s: %v %v", msg, fi, err)
+	}
+}
+
+// requireSymlink fails unless path is a symlink.
+func requireSymlink(t *testing.T, path, msg string) {
+	t.Helper()
+	if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s: %v %v", msg, fi, err)
+	}
+}
+
 // TestApplyStopGateIsMatchable proves the stop-gate refusal is a matchable
 // sentinel — the CLI's queue-offer branch depends on errors.Is, not string
 // grubbing.
@@ -108,29 +168,21 @@ func TestRunPendingAppliesWhenGateClears(t *testing.T) {
 
 	// Gate still closed: run-pending marks blocked, source untouched.
 	results, err := m.RunPending(context.Background(), qs, TriggerPendingManual, -1, nil)
-	if err != nil || len(results) != 1 {
-		t.Fatalf("RunPending: %v (results %v)", err, results)
+	r := requireSingleResult(t, results, err)
+	if r.Outcome != PendingBlocked || !strings.Contains(r.Reason, "stop-gate") {
+		t.Fatalf("want blocked-on-stop-gate, got %+v", r)
 	}
-	if results[0].Outcome != PendingBlocked || !strings.Contains(results[0].Reason, "stop-gate") {
-		t.Fatalf("want blocked-on-stop-gate, got %+v", results[0])
-	}
-	if fi, err := os.Lstat(asset); err != nil || !fi.IsDir() {
-		t.Fatalf("source touched by a blocked re-check: %v %v", fi, err)
-	}
+	requireLiveDir(t, asset, "source touched by a blocked re-check")
 
 	// The app quits; the next re-check applies.
 	procs.running["Claude"] = false
 	results, err = m.RunPending(context.Background(), qs, TriggerPendingManual, -1, func() time.Time { return time.Unix(2000, 0) })
-	if err != nil || len(results) != 1 {
-		t.Fatalf("RunPending 2: %v (results %v)", err, results)
-	}
-	if results[0].Outcome != PendingApplied || !results[0].Attempted || results[0].Freed <= 0 {
-		t.Fatalf("want applied with freed bytes, got %+v", results[0])
+	r = requireSingleResult(t, results, err)
+	if r.Outcome != PendingApplied || !r.Attempted || r.Freed <= 0 {
+		t.Fatalf("want applied with freed bytes, got %+v", r)
 	}
 	// Symlink is live; content reachable through the old path.
-	if fi, err := os.Lstat(asset); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("target is not a symlink after apply: %v %v", fi, err)
-	}
+	requireSymlink(t, asset, "target is not a symlink after apply")
 	if b, err := os.ReadFile(filepath.Join(asset, "a.txt")); err != nil || len(b) != 100 {
 		t.Fatalf("content through symlink: %d bytes, err %v", len(b), err)
 	}
@@ -183,10 +235,7 @@ func TestRunPendingStillBlockedReasons(t *testing.T) {
 			tc.mutate(t, m, guard, asset, destRoot)
 
 			results, err := m.RunPending(context.Background(), qs, TriggerPendingManual, -1, nil)
-			if err != nil || len(results) != 1 {
-				t.Fatalf("RunPending: %v (results %v)", err, results)
-			}
-			r := results[0]
+			r := requireSingleResult(t, results, err)
 			if r.Outcome != PendingBlocked || !strings.Contains(r.Reason, tc.wantReason) {
 				t.Fatalf("want blocked with %q, got %+v", tc.wantReason, r)
 			}
@@ -195,9 +244,7 @@ func TestRunPendingStillBlockedReasons(t *testing.T) {
 			}
 			// Source untouched (when it still exists in this case).
 			if tc.name != "source vanished" {
-				if fi, err := os.Lstat(asset); err != nil || !fi.IsDir() {
-					t.Fatalf("source touched by blocked re-check: %v %v", fi, err)
-				}
+				requireLiveDir(t, asset, "source touched by blocked re-check")
 			}
 			// Row still pending, reason recorded, no attempt burned.
 			row, err := qs.GetRelocation(id)
@@ -240,25 +287,7 @@ func TestRunPendingDestPinChange(t *testing.T) {
 // the oldest applies; the second is left pending and UNRESOLVED (not marked
 // blocked — its gates passed, the run just ran out of allowance).
 func TestRunPendingBudgetCapsApplies(t *testing.T) {
-	home := t.TempDir()
-	destRoot := filepath.Join(t.TempDir(), "offload")
-	if err := os.MkdirAll(destRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var pbs []Playbook
-	assets := make([]string, 2)
-	for i := range assets {
-		name := fmt.Sprintf("asset%d", i)
-		assets[i] = filepath.Join(home, name)
-		if err := os.MkdirAll(assets[i], 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(assets[i], "f.bin"), []byte(strings.Repeat("x", 100)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		pbs = append(pbs, Playbook{AssetID: name, Path: "~/" + name, Class: ClassRelocate, StopGate: "app"})
-	}
-	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "u1"}
+	home, _, assets, cfg, pbs := twoRelocatableAssets(t)
 	procs := &fakeProcs{running: map[string]bool{"app": false}}
 	m := New(cfg, pbs, Deps{Home: home, Guard: &fakeGuard{}, Procs: procs, Copy: goCopy})
 	qs := openQueueStore(t)
@@ -270,9 +299,7 @@ func TestRunPendingBudgetCapsApplies(t *testing.T) {
 	}
 
 	results, err := m.RunPending(context.Background(), qs, TriggerPendingDaily, 1, nil)
-	if err != nil || len(results) != 2 {
-		t.Fatalf("RunPending: %v (%v)", err, results)
-	}
+	results = requireResults(t, results, err, 2)
 	if results[0].Outcome != PendingApplied || results[0].Entry.TargetPath != assets[0] {
 		t.Fatalf("oldest entry must apply first: %+v", results[0])
 	}
@@ -287,9 +314,7 @@ func TestRunPendingBudgetCapsApplies(t *testing.T) {
 		t.Fatalf("budget-skipped row mutated: %+v", pending[0])
 	}
 	// Second asset untouched on disk.
-	if fi, err := os.Lstat(assets[1]); err != nil || !fi.IsDir() {
-		t.Fatalf("budget-skipped source touched: %v %v", fi, err)
-	}
+	requireLiveDir(t, assets[1], "budget-skipped source touched")
 }
 
 // TestRunPendingApplyFailureBlocksAndRestores: when the gates pass but Apply

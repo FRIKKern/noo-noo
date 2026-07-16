@@ -354,11 +354,11 @@ func TestApplyRefusesDestinationEscape(t *testing.T) {
 
 // --- Scan ---------------------------------------------------------------------
 
-// TestScanNativeConfigEvidence: native-config assets surface the EXACT
-// supported command in Evidence and never become file actions.
-func TestScanNativeConfigEvidence(t *testing.T) {
-	home := t.TempDir()
-	for _, d := range []string{"Library/pnpm", ".colima", ".claude", "Library/Application Support/Local/blueprints"} {
+// mkAssetDirs creates each dir under home containing a file named "f". Split
+// out so the Scan tests stay flat (gocyclo).
+func mkAssetDirs(t *testing.T, home string, dirs ...string) {
+	t.Helper()
+	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -366,6 +366,53 @@ func TestScanNativeConfigEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// requireNativeCmd fails unless asset is present, native-config class, and its
+// rendered command carries want.
+func requireNativeCmd(t *testing.T, byAsset map[string]modules.Item, asset, want string) {
+	t.Helper()
+	it, ok := byAsset[asset]
+	if !ok {
+		t.Fatalf("asset %s missing from scan", asset)
+	}
+	if it.Evidence["class"] != string(ClassNativeConfig) {
+		t.Fatalf("%s class = %s, want native-config", asset, it.Evidence["class"])
+	}
+	if !strings.Contains(it.Evidence["native_command"], want) {
+		t.Fatalf("%s native_command %q does not carry %q", asset, it.Evidence["native_command"], want)
+	}
+}
+
+// requireAllRelocate fails if any planned action carries an op other than
+// relocate — the only op this module may ever emit.
+func requireAllRelocate(t *testing.T, actions []modules.Action) {
+	t.Helper()
+	for _, a := range actions {
+		if a.Op != "relocate" {
+			t.Fatalf("non-relocate op planned: %v", a)
+		}
+	}
+}
+
+// requireNoActionTargets fails if any planned action's Target contains one of
+// the given substrings — the native-config / report-only exclusion invariant.
+func requireNoActionTargets(t *testing.T, actions []modules.Action, subs ...string) {
+	t.Helper()
+	for _, a := range actions {
+		for _, s := range subs {
+			if strings.Contains(a.Target, s) {
+				t.Fatalf("planned action for excluded target %q (matched %q): %v", a.Target, s, a)
+			}
+		}
+	}
+}
+
+// TestScanNativeConfigEvidence: native-config assets surface the EXACT
+// supported command in Evidence and never become file actions.
+func TestScanNativeConfigEvidence(t *testing.T) {
+	home := t.TempDir()
+	mkAssetDirs(t, home, "Library/pnpm", ".colima", ".claude", "Library/Application Support/Local/blueprints")
 	destRoot := t.TempDir()
 	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "0DBD1B63-0377-450B-A340-7E72D0925EBC"}
 	m := New(cfg, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy})
@@ -387,16 +434,7 @@ func TestScanNativeConfigEvidence(t *testing.T) {
 		"claude-config": "CLAUDE_CONFIG_DIR",
 	}
 	for asset, want := range wantCmds {
-		it, ok := byAsset[asset]
-		if !ok {
-			t.Fatalf("asset %s missing from scan (items: %v)", asset, rep.Items)
-		}
-		if it.Evidence["class"] != string(ClassNativeConfig) {
-			t.Fatalf("%s class = %s, want native-config", asset, it.Evidence["class"])
-		}
-		if !strings.Contains(it.Evidence["native_command"], want) {
-			t.Fatalf("%s native_command %q does not carry %q", asset, it.Evidence["native_command"], want)
-		}
+		requireNativeCmd(t, byAsset, asset, want)
 	}
 	// pnpm-store must carry the verbatim command, not a paraphrase.
 	if got := byAsset["pnpm-store"].Evidence["native_command"]; got != wantCmds["pnpm-store"] {
@@ -416,14 +454,9 @@ func TestScanNativeConfigEvidence(t *testing.T) {
 	}
 
 	// Native-config and manual assets never become actions.
-	for _, a := range m.Plan(rep) {
-		if a.Op != "relocate" {
-			t.Fatalf("non-relocate op planned: %v", a)
-		}
-		if strings.Contains(a.Target, "pnpm") || strings.Contains(a.Target, ".colima") || strings.Contains(a.Target, ".claude") {
-			t.Fatalf("file action planned for a native-config asset: %v", a)
-		}
-	}
+	actions := m.Plan(rep)
+	requireAllRelocate(t, actions)
+	requireNoActionTargets(t, actions, "pnpm", ".colima", ".claude")
 }
 
 // TestScanDetectsUnguardedExternalSymlinks: top-level $HOME symlinks
@@ -465,11 +498,7 @@ func TestScanDetectsUnguardedExternalSymlinks(t *testing.T) {
 	// Report-only: no action may come out of a risk item.
 	m2 := New(Config{DestRoot: t.TempDir(), DestVolumeUUID: "u"}, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy})
 	rep2, _ := m2.Scan(context.Background())
-	for _, a := range m2.Plan(rep2) {
-		if strings.Contains(a.Target, "Desktop") || strings.Contains(a.Target, "Documents") || strings.Contains(a.Target, "Downloads") {
-			t.Fatalf("risk item produced an action: %v", a)
-		}
-	}
+	requireNoActionTargets(t, m2.Plan(rep2), "Desktop", "Documents", "Downloads")
 }
 
 func TestScanUnconfiguredVerdictAndEmptyPlan(t *testing.T) {
@@ -641,14 +670,14 @@ func TestApplyPathGateProceedsWhenClear(t *testing.T) {
 	}
 }
 
-// TestClaudeJobsRelocatesIndependentlyOfParent: the shipped claude-jobs
-// exemplar is a flat sibling ClassRelocate path-gated entry that plans and
-// applies on its own, while its ClassNativeConfig parent (~/.claude) is never
-// planned and stays a real directory — the live 2026-07-15 win.
-func TestClaudeJobsRelocatesIndependentlyOfParent(t *testing.T) {
-	home := t.TempDir()
-	claude := filepath.Join(home, ".claude")
-	jobs := filepath.Join(claude, "jobs")
+// claudeJobsFixture lays down ~/.claude (the native-config parent) with a
+// config file and a jobs/ sub-dir (the relocate sub-asset), plus an offload
+// destination. Split out so the test stays flat (gocyclo).
+func claudeJobsFixture(t *testing.T) (home, claude, jobs string, cfg Config) {
+	t.Helper()
+	home = t.TempDir()
+	claude = filepath.Join(home, ".claude")
+	jobs = filepath.Join(claude, "jobs")
 	if err := os.MkdirAll(jobs, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +691,36 @@ func TestClaudeJobsRelocatesIndependentlyOfParent(t *testing.T) {
 	if err := os.MkdirAll(destRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "u"}
+	cfg = Config{DestRoot: destRoot, DestVolumeUUID: "u"}
+	return home, claude, jobs, cfg
+}
+
+// findJobsAction returns the planned action for the jobs sub-asset and fails if
+// the native-config parent (~/.claude) was ever planned or the sub-asset was
+// not.
+func findJobsAction(t *testing.T, plan []modules.Action, claude, jobs string) modules.Action {
+	t.Helper()
+	var jobsAction *modules.Action
+	for i := range plan {
+		if filepath.Clean(plan[i].Target) == filepath.Clean(claude) {
+			t.Fatalf("parent ~/.claude planned for relocation: %v", plan[i])
+		}
+		if filepath.Clean(plan[i].Target) == filepath.Clean(jobs) {
+			jobsAction = &plan[i]
+		}
+	}
+	if jobsAction == nil {
+		t.Fatalf("claude-jobs not planned: %v", plan)
+	}
+	return *jobsAction
+}
+
+// TestClaudeJobsRelocatesIndependentlyOfParent: the shipped claude-jobs
+// exemplar is a flat sibling ClassRelocate path-gated entry that plans and
+// applies on its own, while its ClassNativeConfig parent (~/.claude) is never
+// planned and stays a real directory — the live 2026-07-15 win.
+func TestClaudeJobsRelocatesIndependentlyOfParent(t *testing.T) {
+	home, claude, jobs, cfg := claudeJobsFixture(t)
 	probe := &fakePathProbe{live: false}
 	m := New(cfg, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy, PathProbe: probe.probe})
 
@@ -695,30 +753,14 @@ func TestClaudeJobsRelocatesIndependentlyOfParent(t *testing.T) {
 	}
 
 	// Plan yields the jobs relocate and NEVER the parent.
-	plan := m.Plan(rep)
-	var jobsAction *modules.Action
-	for i := range plan {
-		if filepath.Clean(plan[i].Target) == filepath.Clean(claude) {
-			t.Fatalf("parent ~/.claude planned for relocation: %v", plan[i])
-		}
-		if filepath.Clean(plan[i].Target) == filepath.Clean(jobs) {
-			jobsAction = &plan[i]
-		}
-	}
-	if jobsAction == nil {
-		t.Fatalf("claude-jobs not planned: %v", plan)
-	}
+	jobsAction := findJobsAction(t, m.Plan(rep), claude, jobs)
 
 	// Apply the sub-asset independently: jobs becomes a symlink, parent stays.
-	if _, err := m.Apply(context.Background(), *jobsAction); err != nil {
+	if _, err := m.Apply(context.Background(), jobsAction); err != nil {
 		t.Fatalf("apply claude-jobs: %v", err)
 	}
-	if fi, err := os.Lstat(jobs); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("jobs not relocated to a symlink: %v %v", fi, err)
-	}
-	if fi, err := os.Lstat(claude); err != nil || !fi.IsDir() {
-		t.Fatalf("parent ~/.claude damaged by sub-asset relocate: %v %v", fi, err)
-	}
+	requireSymlink(t, jobs, "jobs not relocated to a symlink")
+	requireLiveDir(t, claude, "parent ~/.claude damaged by sub-asset relocate")
 	if b, err := os.ReadFile(filepath.Join(claude, "config.json")); err != nil || string(b) != "cfg" {
 		t.Fatalf("parent config lost: %q err %v", b, err)
 	}

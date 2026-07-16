@@ -53,7 +53,7 @@ const blockUnit = 512
 // that produced it stay zero (Blocks fills Logical+Blocks; UniqueAllocated
 // fills all three byte fields).
 type TreeSize struct {
-	// Files is the number of regular files measured. Hardlinked files are
+	// Files is the number of regular files measured. Hard-linked files are
 	// counted once per (dev, inode), not once per name.
 	Files int
 	// Errs is the number of entries that could not be measured (stat/open

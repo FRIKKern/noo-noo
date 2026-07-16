@@ -111,17 +111,9 @@ func (g VolGuard) CheckDest(ctx context.Context, destDir, pinnedUUID string) err
 		return fmt.Errorf("%w: cannot resolve mount point of %q: %v", ErrVolumeAbsent, destDir, err)
 	}
 
-	plist, err := runner.Output(ctx, nil, "/usr/sbin/diskutil", "info", "-plist", mount)
+	vi, err := resolveVolumeInfo(ctx, runner, mount, destDir)
 	if err != nil {
-		return fmt.Errorf("%w: diskutil cannot resolve %q (mount of %q): %v", ErrVolumeAbsent, mount, destDir, err)
-	}
-	jsonBytes, err := runner.Output(ctx, plist, "/usr/bin/plutil", "-convert", "json", "-o", "-", "-")
-	if err != nil {
-		return fmt.Errorf("%w: plutil conversion failed for %q: %v", ErrVolumeAbsent, destDir, err)
-	}
-	var vi volumeInfo
-	if err := json.Unmarshal(jsonBytes, &vi); err != nil {
-		return fmt.Errorf("%w: unparseable diskutil output for %q: %v", ErrVolumeAbsent, destDir, err)
+		return err
 	}
 
 	if !strings.EqualFold(vi.VolumeUUID, pinnedUUID) {
@@ -132,9 +124,33 @@ func (g VolGuard) CheckDest(ctx context.Context, destDir, pinnedUUID string) err
 		return fmt.Errorf("%w: diskutil reports %q read-only", ErrNotWritable, destDir)
 	}
 
-	// Live probe: diskutil flags can be stale or wrong (Kompis mounted with
-	// Writable metadata yet every write failed "Read-only file system").
-	// Only an actual write proves the destination.
+	return probeDest(destDir)
+}
+
+// resolveVolumeInfo runs `diskutil info -plist mount` through plutil→JSON and
+// parses the subset CheckDest needs. mount must already be a volume mount
+// point (diskutil does not resolve arbitrary subdirectories).
+func resolveVolumeInfo(ctx context.Context, runner OutputRunner, mount, destDir string) (volumeInfo, error) {
+	plist, err := runner.Output(ctx, nil, "/usr/sbin/diskutil", "info", "-plist", mount)
+	if err != nil {
+		return volumeInfo{}, fmt.Errorf("%w: diskutil cannot resolve %q (mount of %q): %v", ErrVolumeAbsent, mount, destDir, err)
+	}
+	jsonBytes, err := runner.Output(ctx, plist, "/usr/bin/plutil", "-convert", "json", "-o", "-", "-")
+	if err != nil {
+		return volumeInfo{}, fmt.Errorf("%w: plutil conversion failed for %q: %v", ErrVolumeAbsent, destDir, err)
+	}
+	var vi volumeInfo
+	if err := json.Unmarshal(jsonBytes, &vi); err != nil {
+		return volumeInfo{}, fmt.Errorf("%w: unparseable diskutil output for %q: %v", ErrVolumeAbsent, destDir, err)
+	}
+	return vi, nil
+}
+
+// probeDest proves the destination is live-writable by creating, writing, and
+// removing a probe file. diskutil flags can be stale or wrong (Kompis mounted
+// with Writable metadata yet every write failed "Read-only file system") —
+// only an actual write proves the destination.
+func probeDest(destDir string) error {
 	probe, err := os.CreateTemp(destDir, ".noo-noo-probe-*")
 	if err != nil {
 		return fmt.Errorf("%w: create probe in %q: %v", ErrProbeFailed, destDir, err)

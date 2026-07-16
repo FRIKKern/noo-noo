@@ -169,37 +169,16 @@ func gatherStatus(ctx context.Context, storeOverride string, days int, now time.
 
 	since := now.Add(-time.Duration(days) * 24 * time.Hour)
 	if internalUUID != "" {
-		series, err := st.DiskSpaceSeries(internalUUID, since)
-		if err != nil {
+		if err := fillInternalTrend(&data, st, internalUUID, free, since); err != nil {
 			return data, fmt.Errorf("read %s: %w", path, err)
-		}
-		samples := make([]trend.Sample, len(series))
-		for i, s := range series {
-			samples[i] = trend.Sample{At: s.At, Bytes: s.TotalBytes - s.FreeBytes}
-		}
-		buckets := trend.DayBucket(samples)
-		data.Internal.HistoryDays = len(buckets)
-		data.Internal.Fit = trend.LinearFit(buckets)
-		if data.Internal.Fit.OK {
-			data.Internal.DaysUntilFull, data.Internal.FullOK =
-				trend.DaysUntilFull(free, data.Internal.Fit.BytesPerDay)
 		}
 	}
 
 	// When disk history can't carry a fit yet, fall back to cache velocity:
 	// the fastest-growing recorded targets, day-bucketed the same way.
 	if !data.Internal.Fit.OK {
-		trendsData, err := gatherTrends(st, now, days)
-		if err != nil {
+		if err := fillCacheFallback(&data, st, now, days); err != nil {
 			return data, fmt.Errorf("read %s: %w", path, err)
-		}
-		for _, c := range trendsData.Caches {
-			if c.Fit.OK && c.Fit.BytesPerDay > 0 {
-				data.CacheFallback = append(data.CacheFallback, c)
-			}
-		}
-		if len(data.CacheFallback) > 3 {
-			data.CacheFallback = data.CacheFallback[:3]
 		}
 	}
 
@@ -216,6 +195,47 @@ func gatherStatus(ctx context.Context, storeOverride string, days int, now time.
 		NearContinuous: batches >= nearContinuousBatches24h,
 	}
 	return data, nil
+}
+
+// fillInternalTrend fits the internal disk's usage history into data.Internal
+// and, when the fit holds, projects days-until-full from the current free
+// bytes. Split out of gatherStatus to keep the assembler flat.
+func fillInternalTrend(data *statusData, st *store.Store, internalUUID string, free int64, since time.Time) error {
+	series, err := st.DiskSpaceSeries(internalUUID, since)
+	if err != nil {
+		return err
+	}
+	samples := make([]trend.Sample, len(series))
+	for i, s := range series {
+		samples[i] = trend.Sample{At: s.At, Bytes: s.TotalBytes - s.FreeBytes}
+	}
+	buckets := trend.DayBucket(samples)
+	data.Internal.HistoryDays = len(buckets)
+	data.Internal.Fit = trend.LinearFit(buckets)
+	if data.Internal.Fit.OK {
+		data.Internal.DaysUntilFull, data.Internal.FullOK =
+			trend.DaysUntilFull(free, data.Internal.Fit.BytesPerDay)
+	}
+	return nil
+}
+
+// fillCacheFallback populates data.CacheFallback with the top few
+// fastest-growing caches, the fallback posture when the internal disk history
+// cannot carry a fit yet.
+func fillCacheFallback(data *statusData, st *store.Store, now time.Time, days int) error {
+	trendsData, err := gatherTrends(st, now, days)
+	if err != nil {
+		return err
+	}
+	for _, c := range trendsData.Caches {
+		if c.Fit.OK && c.Fit.BytesPerDay > 0 {
+			data.CacheFallback = append(data.CacheFallback, c)
+		}
+	}
+	if len(data.CacheFallback) > 3 {
+		data.CacheFallback = data.CacheFallback[:3]
+	}
+	return nil
 }
 
 // checkOffloadPosture live-verifies the configured offload destination with

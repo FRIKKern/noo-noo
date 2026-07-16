@@ -150,22 +150,8 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 	}
 
 	// TOCTOU guard: never trust identity carried over from Scan/Plan.
-	procs, err := m.listProcesses(ctx)
-	if err != nil {
+	if err := m.verifyStillOrphan(ctx, pid); err != nil {
 		return fail(err)
-	}
-	p, found := findPID(procs, pid)
-	if !found {
-		return fail(fmt.Errorf("orphans: pid %d is not running (already exited?) — nothing to signal", pid))
-	}
-	if p.UID != m.uid {
-		return fail(fmt.Errorf("orphans: pid %d is owned by uid %d, not %d — refusing", pid, p.UID, m.uid))
-	}
-	if p.PPID != 1 {
-		return fail(fmt.Errorf("orphans: pid %d has a live parent (ppid %d) — no longer an orphan, refusing", pid, p.PPID))
-	}
-	if _, _, ok := m.matchAny(p); !ok {
-		return fail(fmt.Errorf("orphans: pid %d cmdline no longer matches any registered signature (pid recycled?) — refusing: %q", pid, p.Command))
 	}
 
 	if err := m.kill(pid, syscall.SIGTERM); err != nil {
@@ -184,6 +170,31 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return res, nil
 	}
 	return fail(fmt.Errorf("orphans: pid %d survived SIGTERM and SIGKILL", pid))
+}
+
+// verifyStillOrphan re-reads the process table and refuses unless pid is still
+// a running, same-uid, reparented process matching a registered signature —
+// the TOCTOU guard so identity carried from Scan/Plan is never trusted at
+// signal time.
+func (m *Module) verifyStillOrphan(ctx context.Context, pid int) error {
+	procs, err := m.listProcesses(ctx)
+	if err != nil {
+		return err
+	}
+	p, found := findPID(procs, pid)
+	if !found {
+		return fmt.Errorf("orphans: pid %d is not running (already exited?) — nothing to signal", pid)
+	}
+	if p.UID != m.uid {
+		return fmt.Errorf("orphans: pid %d is owned by uid %d, not %d — refusing", pid, p.UID, m.uid)
+	}
+	if p.PPID != 1 {
+		return fmt.Errorf("orphans: pid %d has a live parent (ppid %d) — no longer an orphan, refusing", pid, p.PPID)
+	}
+	if _, _, ok := m.matchAny(p); !ok {
+		return fmt.Errorf("orphans: pid %d cmdline no longer matches any registered signature (pid recycled?) — refusing: %q", pid, p.Command)
+	}
+	return nil
 }
 
 // listProcesses reads the process table through the injectable runner.

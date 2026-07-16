@@ -166,61 +166,70 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 		if err := ctx.Err(); err != nil {
 			return rep, err
 		}
-		ev := map[string]string{
-			"class":         string(pb.Class),
-			"asset_id":      pb.AssetID,
-			"guard_verdict": verdict,
+		if it, ok := m.scanPlaybook(pb, verdict, &rep); ok {
+			rep.Items = append(rep.Items, it)
 		}
-		if pb.Note != "" {
-			ev["note"] = pb.Note
-		}
-
-		if pb.Path == "" { // generic manual entry: informational only
-			rep.Items = append(rep.Items, modules.Item{Path: "(" + pb.AssetID + ")", Evidence: ev})
-			continue
-		}
-		p := expandPath(m.home, pb.Path)
-		info, err := os.Stat(p)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		size, err := m.sizes.Blocks(p)
-		if err != nil {
-			ev["size_error"] = err.Error()
-		}
-		ev["allocated_bytes"] = strconv.FormatInt(int64(size), 10)
-
-		switch pb.Class {
-		case ClassNativeConfig:
-			// Render the machine-agnostic {dest_root} template against the
-			// configured destination at READ time — an unconfigured dest_root
-			// yields the placeholder, and the verdict above carries the
-			// "configure [offload] dest_root" guidance.
-			ev["native_command"] = renderNativeCommand(pb.NativeCommand, m.cfg.DestRoot)
-			ev["suggestion"] = "use the app's own relocation — noo-noo will not move this (the app would regrow the store at the old path)"
-		case ClassRelocate:
-			if uniq, err := m.sizes.UniqueAllocated(p); err == nil {
-				ev["unique_allocated_bytes"] = strconv.FormatInt(int64(uniq), 10)
-			}
-			if pb.NeverDelete {
-				ev["never_delete"] = "true"
-			}
-			rep.Total += size
-		}
-		if pb.pathGated() {
-			ev["gate"] = "path"
-		} else if pb.StopGate != "" {
-			ev["gate"] = "process"
-			ev["stop_gate"] = pb.StopGate
-		}
-		if pb.ParentAssetID != "" {
-			ev["parent_asset"] = pb.ParentAssetID
-		}
-		rep.Items = append(rep.Items, modules.Item{Path: p, Size: size, Evidence: ev})
 	}
 
 	m.scanExternalSymlinkRisks(&rep)
 	return rep, nil
+}
+
+// scanPlaybook builds the report Item for one playbook and reports whether it
+// contributes: an absent or unreadable relocate target yields (zero, false).
+// rep.Total is advanced for relocate-class assets; verdict is the shared guard
+// verdict line stamped on every item.
+func (m *Module) scanPlaybook(pb Playbook, verdict string, rep *modules.Report) (modules.Item, bool) {
+	ev := map[string]string{
+		"class":         string(pb.Class),
+		"asset_id":      pb.AssetID,
+		"guard_verdict": verdict,
+	}
+	if pb.Note != "" {
+		ev["note"] = pb.Note
+	}
+
+	if pb.Path == "" { // generic manual entry: informational only
+		return modules.Item{Path: "(" + pb.AssetID + ")", Evidence: ev}, true
+	}
+	p := expandPath(m.home, pb.Path)
+	info, err := os.Stat(p)
+	if err != nil || !info.IsDir() {
+		return modules.Item{}, false
+	}
+	size, err := m.sizes.Blocks(p)
+	if err != nil {
+		ev["size_error"] = err.Error()
+	}
+	ev["allocated_bytes"] = strconv.FormatInt(int64(size), 10)
+
+	switch pb.Class {
+	case ClassNativeConfig:
+		// Render the machine-agnostic {dest_root} template against the
+		// configured destination at READ time — an unconfigured dest_root
+		// yields the placeholder, and the verdict above carries the
+		// "configure [offload] dest_root" guidance.
+		ev["native_command"] = renderNativeCommand(pb.NativeCommand, m.cfg.DestRoot)
+		ev["suggestion"] = "use the app's own relocation — noo-noo will not move this (the app would regrow the store at the old path)"
+	case ClassRelocate:
+		if uniq, err := m.sizes.UniqueAllocated(p); err == nil {
+			ev["unique_allocated_bytes"] = strconv.FormatInt(int64(uniq), 10)
+		}
+		if pb.NeverDelete {
+			ev["never_delete"] = "true"
+		}
+		rep.Total += size
+	}
+	if pb.pathGated() {
+		ev["gate"] = "path"
+	} else if pb.StopGate != "" {
+		ev["gate"] = "process"
+		ev["stop_gate"] = pb.StopGate
+	}
+	if pb.ParentAssetID != "" {
+		ev["parent_asset"] = pb.ParentAssetID
+	}
+	return modules.Item{Path: p, Size: size, Evidence: ev}, true
 }
 
 // scanExternalSymlinkRisks flags top-level $HOME entries that are symlinks
@@ -325,57 +334,18 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return fail(fmt.Errorf("offload: destination refused: %w", err))
 	}
 
-	if pb.pathGated() {
-		// Path-gate: probe the target subtree for open files instead of a
-		// named process. Fail-safe — the prober reports live=true whenever
-		// emptiness cannot be proven (missing lsof, timeout, error). Wrapped
-		// in ErrStopGate: "something still holds it open" is exactly as
-		// deferrable as a running stop-gate process — the queue re-checks
-		// the same gate fresh at the next safe moment.
-		if live, proof := m.pathProbe(ctx, a.Target); live {
-			return fail(fmt.Errorf("offload: %w: path-gate: %q is in use — %s (close what holds it open and retry, or queue with --defer)", ErrStopGate, a.Target, proof))
-		}
-	} else if pb.StopGate != "" {
-		running, err := m.procs.Running(ctx, pb.StopGate)
-		if err != nil {
-			return fail(fmt.Errorf("offload: stop-gate check for %q failed: %w", pb.StopGate, err))
-		}
-		if running {
-			return fail(fmt.Errorf("offload: %w: %q is running — stop it and retry (or queue with --defer)", ErrStopGate, pb.StopGate))
-		}
+	if err := m.checkStopGate(ctx, pb, a.Target); err != nil {
+		return fail(fmt.Errorf("offload: %w", err))
 	}
 
 	dest := a.Destination
-	if rel, err := filepath.Rel(m.cfg.DestRoot, dest); err != nil || strings.HasPrefix(rel, "..") {
-		return fail(fmt.Errorf("offload: destination %q escapes dest_root %q", dest, m.cfg.DestRoot))
-	}
-	if _, err := os.Lstat(dest); err == nil {
-		return fail(fmt.Errorf("offload: destination %q already exists — refusing to overwrite", dest))
-	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return fail(fmt.Errorf("offload: mkdir %q: %w", filepath.Dir(dest), err))
+	if err := m.prepareDest(dest); err != nil {
+		return fail(fmt.Errorf("offload: %w", err))
 	}
 
-	// Copy. Source is untouched until the copy is verified.
-	if err := m.copy(ctx, a.Target, dest); err != nil {
-		_ = os.RemoveAll(dest) // drop the partial copy
-		return fail(fmt.Errorf("offload: copy failed, source untouched: %w", err))
-	}
-
-	srcN, srcB, err := countAndBytes(a.Target)
-	if err != nil {
-		_ = os.RemoveAll(dest)
-		return fail(fmt.Errorf("offload: verify walk of source failed: %w", err))
-	}
-	dstN, dstB, err := countAndBytes(dest)
-	if err != nil {
-		_ = os.RemoveAll(dest)
-		return fail(fmt.Errorf("offload: verify walk of copy failed: %w", err))
-	}
-	if srcN != dstN || srcB != dstB {
-		_ = os.RemoveAll(dest)
-		return fail(fmt.Errorf("offload: copy verify FAILED (source %d files/%d bytes, copy %d files/%d bytes) — source untouched",
-			srcN, int64(srcB), dstN, int64(dstB)))
+	// Copy, then verify parity. Source is untouched until the copy is proven.
+	if err := m.copyOrClean(ctx, a.Target, dest); err != nil {
+		return fail(fmt.Errorf("offload: %w", err))
 	}
 
 	// Estimate local reclaim before the tree moves aside: the clone-aware
@@ -402,13 +372,8 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return fail(fmt.Errorf("offload: %w — original restored", cause))
 	}
 
-	if err := os.Symlink(dest, a.Target); err != nil {
-		return restore(fmt.Errorf("symlink %q → %q failed: %w", a.Target, dest, err))
-	}
-	resolvedLink, lerr := filepath.EvalSymlinks(a.Target)
-	resolvedDest, derr := filepath.EvalSymlinks(dest)
-	if lerr != nil || derr != nil || resolvedLink != resolvedDest {
-		return restore(fmt.Errorf("symlink verify failed (link → %q err %v, dest %q err %v)", resolvedLink, lerr, resolvedDest, derr))
+	if err := linkAndVerify(a.Target, dest); err != nil {
+		return restore(err)
 	}
 
 	// Only now is the bak safe to drop.
@@ -419,6 +384,89 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 	}
 	res.BytesFreed = freed
 	return res, nil
+}
+
+// checkStopGate enforces the asset's gate before any move: a path-gated asset
+// must have nothing holding its subtree open; a process-gated asset must have
+// its stop-gate process not running. Both failures are ErrStopGate-wrapped so
+// the caller can offer to queue.
+func (m *Module) checkStopGate(ctx context.Context, pb Playbook, target string) error {
+	if pb.pathGated() {
+		// Path-gate: probe the target subtree for open files instead of a
+		// named process. Fail-safe — the prober reports live=true whenever
+		// emptiness cannot be proven (missing lsof, timeout, error). Wrapped
+		// in ErrStopGate: "something still holds it open" is exactly as
+		// deferrable as a running stop-gate process — the queue re-checks
+		// the same gate fresh at the next safe moment.
+		if live, proof := m.pathProbe(ctx, target); live {
+			return fmt.Errorf("%w: path-gate: %q is in use — %s (close what holds it open and retry, or queue with --defer)", ErrStopGate, target, proof)
+		}
+		return nil
+	}
+	if pb.StopGate != "" {
+		running, err := m.procs.Running(ctx, pb.StopGate)
+		if err != nil {
+			return fmt.Errorf("stop-gate check for %q failed: %w", pb.StopGate, err)
+		}
+		if running {
+			return fmt.Errorf("%w: %q is running — stop it and retry (or queue with --defer)", ErrStopGate, pb.StopGate)
+		}
+	}
+	return nil
+}
+
+// prepareDest validates that dest stays within dest_root, does not already
+// exist, and that its parent directory exists.
+func (m *Module) prepareDest(dest string) error {
+	if rel, err := filepath.Rel(m.cfg.DestRoot, dest); err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("destination %q escapes dest_root %q", dest, m.cfg.DestRoot)
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return fmt.Errorf("destination %q already exists — refusing to overwrite", dest)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), err)
+	}
+	return nil
+}
+
+// copyOrClean copies target→dest and verifies file-count and byte parity,
+// removing a partial or failed copy so the source is left untouched.
+func (m *Module) copyOrClean(ctx context.Context, target, dest string) error {
+	if err := m.copy(ctx, target, dest); err != nil {
+		_ = os.RemoveAll(dest) // drop the partial copy
+		return fmt.Errorf("copy failed, source untouched: %w", err)
+	}
+	srcN, srcB, err := countAndBytes(target)
+	if err != nil {
+		_ = os.RemoveAll(dest)
+		return fmt.Errorf("verify walk of source failed: %w", err)
+	}
+	dstN, dstB, err := countAndBytes(dest)
+	if err != nil {
+		_ = os.RemoveAll(dest)
+		return fmt.Errorf("verify walk of copy failed: %w", err)
+	}
+	if srcN != dstN || srcB != dstB {
+		_ = os.RemoveAll(dest)
+		return fmt.Errorf("copy verify FAILED (source %d files/%d bytes, copy %d files/%d bytes) — source untouched",
+			srcN, int64(srcB), dstN, int64(dstB))
+	}
+	return nil
+}
+
+// linkAndVerify replaces target with a symlink to dest and confirms both
+// resolve to the same real path.
+func linkAndVerify(target, dest string) error {
+	if err := os.Symlink(dest, target); err != nil {
+		return fmt.Errorf("symlink %q → %q failed: %w", target, dest, err)
+	}
+	resolvedLink, lerr := filepath.EvalSymlinks(target)
+	resolvedDest, derr := filepath.EvalSymlinks(dest)
+	if lerr != nil || derr != nil || resolvedLink != resolvedDest {
+		return fmt.Errorf("symlink verify failed (link → %q err %v, dest %q err %v)", resolvedLink, lerr, resolvedDest, derr)
+	}
+	return nil
 }
 
 func (m *Module) playbookForTarget(target string) (Playbook, bool) {

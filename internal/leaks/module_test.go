@@ -315,6 +315,15 @@ func TestEvidenceCitesTruth(t *testing.T) {
 	}
 }
 
+// requireGlobMatch asserts filepath.Match(glob, path) == want. Split out so
+// TestDefaultSignaturesShape stays flat (gocyclo).
+func requireGlobMatch(t *testing.T, glob, path string, want bool) {
+	t.Helper()
+	if ok, _ := filepath.Match(glob, path); ok != want {
+		t.Errorf("glob %q match %q = %v, want %v", glob, path, ok, want)
+	}
+}
+
 // TestDefaultSignaturesShape pins the shipped registry data: the founding
 // Chrome class (lsof-only staleness + the documented workaround flag) and
 // the /private/tmp agent-scratch class (7d age gate).
@@ -341,12 +350,8 @@ func TestDefaultSignaturesShape(t *testing.T) {
 	}
 	// The founding path must match; the parent dir must not.
 	leaf := "/private/var/folders/hb/18wmml0n5495w28s_1z_8flh0000gn/X/com.google.Chrome.code_sign_clone/code_sign_clone.abc123"
-	if ok, _ := filepath.Match(chrome.Globs[0], leaf); !ok {
-		t.Errorf("founding clone path does not match the shipped glob")
-	}
-	if ok, _ := filepath.Match(chrome.Globs[0], filepath.Dir(leaf)); ok {
-		t.Errorf("glob must not match the clone PARENT dir")
-	}
+	requireGlobMatch(t, chrome.Globs[0], leaf, true)
+	requireGlobMatch(t, chrome.Globs[0], filepath.Dir(leaf), false)
 
 	scratch, ok := byID["private-tmp-agent-scratch"]
 	if !ok {
