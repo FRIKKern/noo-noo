@@ -48,7 +48,7 @@ var autoCleanCfgFn = func(_ config.Config) autoclean.Config {
 //     evaluate every fresh suggestion against the gates, run Apply for
 //     each pass, and dismiss any suggestion whose target was actually
 //     deleted so the user doesn't see stale entries.
-//  3b. If trigger == daily AND the [offload] auto-apply pair is armed
+//     3b. If trigger == daily AND the [offload] auto-apply pair is armed
 //     (auto_apply_pending=true AND risk_acknowledged_at set): re-check
 //     queued relocations with ALL gates fresh and apply AT MOST ONE
 //     (budget 1/tick). Two-phase row updates around the apply; a
