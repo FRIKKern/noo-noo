@@ -333,7 +333,7 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		// deferrable as a running stop-gate process — the queue re-checks
 		// the same gate fresh at the next safe moment.
 		if live, proof := m.pathProbe(ctx, a.Target); live {
-			return fail(fmt.Errorf("offload: %w: %q is in use — %s (close what holds it open and retry, or queue with --defer)", ErrStopGate, a.Target, proof))
+			return fail(fmt.Errorf("offload: %w: path-gate: %q is in use — %s (close what holds it open and retry, or queue with --defer)", ErrStopGate, a.Target, proof))
 		}
 	} else if pb.StopGate != "" {
 		running, err := m.procs.Running(ctx, pb.StopGate)
