@@ -83,3 +83,27 @@ CREATE TABLE IF NOT EXISTS auto_clean_events (
 );
 CREATE INDEX IF NOT EXISTS idx_auto_clean_started ON auto_clean_events(started_at_unix);
 CREATE INDEX IF NOT EXISTS idx_auto_clean_outcome ON auto_clean_events(outcome);
+
+-- wave-2: disk-space time-series (posture data layer).
+--
+-- One row per (volume, sample): a point-in-time capacity reading for the boot
+-- volume and each mounted /Volumes/* volume. scan.ScanRoots records these,
+-- throttled to at most one row per volume per hour (pressure-triggered scans
+-- fire ~every 5 min; unthrottled this would grow ~300 rows/day/volume). It is
+-- the source series for `noo-noo status`/`trends`: the days-until-full forecast
+-- day-buckets these samples (charter D18), and cumulative-fill patterns read
+-- the free_bytes trend per volume_uuid.
+--
+-- Appended as CREATE TABLE IF NOT EXISTS ONLY (charter D16): migrate() re-execs
+-- this whole file on every Open, so a bare ALTER TABLE would error on the
+-- second daemon start and brick the store. Never ALTER; new tables only.
+CREATE TABLE IF NOT EXISTS disk_space_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    volume_uuid  TEXT     NOT NULL,
+    mount_point  TEXT     NOT NULL,
+    total_bytes  INTEGER  NOT NULL,
+    free_bytes   INTEGER  NOT NULL,
+    recorded_at  DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_disk_history_volume_time
+    ON disk_space_history(volume_uuid, recorded_at);
