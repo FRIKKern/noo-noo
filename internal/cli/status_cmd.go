@@ -24,6 +24,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/store"
 	"github.com/FRIKKern/noo-noo/internal/trend"
+	"github.com/FRIKKern/noo-noo/internal/vmdisk"
 )
 
 func init() { Register("status", statusCmd) }
@@ -68,6 +69,7 @@ type statusData struct {
 	CacheFallback []cacheTrend // top growing caches, shown when disk history is short
 	Externals     []core.Volume
 	Offload       offloadPosture
+	VM            vmdisk.Report // guest datadisk posture; empty = silent section
 	Pressure      pressurePosture
 	StoreNote     string // non-empty when history could not be read (missing store etc.)
 }
@@ -145,6 +147,16 @@ func gatherStatus(ctx context.Context, storeOverride string, days int, now time.
 		cfg = config.Defaults()
 	}
 	data.Offload = checkOffloadPosture(ctx, cfg)
+
+	// VM inner disks (charter D21): a guest datadisk can hit 100% and kill
+	// dockerd while the HOST still reports plenty of free space, so posture
+	// must look inside. Read-only and silent when no VM manager is installed;
+	// a detection failure is a posture note, never a status failure.
+	if vmRep, err := (&vmdisk.Detector{}).Report(ctx, cfg.Offload.DestRoot); err == nil {
+		data.VM = vmRep
+	} else {
+		data.StoreNote = appendNote(data.StoreNote, fmt.Sprintf("vm datadisk inventory unavailable: %v", err))
+	}
 
 	// History-derived posture. A missing store degrades to "no history",
 	// never to a lie.
@@ -342,6 +354,9 @@ func renderStatus(out io.Writer, d statusData) {
 	_, _ = fmt.Fprintln(out, "\nOffload")
 	_, _ = fmt.Fprintf(out, "  %s\n", offloadLine(d.Offload))
 
+	// VM datadisk section — silent when no VMs exist (the honest empty state).
+	vmdisk.RenderSection(out, d.VM)
+
 	_, _ = fmt.Fprintln(out, "\nPressure")
 	if d.Pressure.NearContinuous {
 		_, _ = fmt.Fprintf(out, "  scan triggers fired ~%d times in the last 24h — this machine spends much of its day at the memory-pressure threshold (working as designed, but a posture worth knowing)\n",
@@ -385,12 +400,28 @@ type statusJSON struct {
 		Usable     bool   `json:"usable"`
 		Detail     string `json:"detail"`
 	} `json:"offload"`
+	VMs      []statusVMJSON `json:"vm_datadisks,omitempty"`
 	Pressure struct {
 		Batches24h     int  `json:"scan_batches_24h"`
 		NearContinuous bool `json:"near_continuous"`
 	} `json:"pressure"`
 	Note    string `json:"note,omitempty"`
 	Verdict string `json:"verdict"`
+}
+
+// statusVMJSON is one guest datadisk row, with its advice (when the fill
+// crossed the warn threshold) inlined.
+type statusVMJSON struct {
+	Kind            string `json:"kind"`
+	Name            string `json:"name"`
+	Running         bool   `json:"running"`
+	DatadiskPresent bool   `json:"datadisk_present"`
+	TotalBytes      uint64 `json:"total_bytes"`
+	UsedBytes       uint64 `json:"used_bytes"`
+	PctFull         int    `json:"pct_full"`
+	AdviceLevel     string `json:"advice_level,omitempty"`
+	Advice          string `json:"advice,omitempty"`
+	Command         string `json:"command,omitempty"`
 }
 
 type statusVolumeJSON struct {
@@ -424,6 +455,25 @@ func renderStatusJSON(out io.Writer, d statusData) error {
 	j.Offload.DestRoot = d.Offload.DestRoot
 	j.Offload.Usable = d.Offload.Usable
 	j.Offload.Detail = d.Offload.Detail
+	adviceByKey := map[string]vmdisk.Advice{}
+	for _, a := range d.VM.Advices {
+		adviceByKey[a.VM.Kind+"/"+a.VM.Name] = a
+	}
+	for _, vm := range d.VM.VMs {
+		row := statusVMJSON{
+			Kind: vm.Kind, Name: vm.Name, Running: vm.Running,
+			DatadiskPresent: vm.Datadisk.Present,
+			TotalBytes:      vm.Datadisk.TotalBytes,
+			UsedBytes:       vm.Datadisk.UsedBytes,
+			PctFull:         vm.Datadisk.Pct(),
+		}
+		if a, ok := adviceByKey[vm.Kind+"/"+vm.Name]; ok {
+			row.AdviceLevel = string(a.Level)
+			row.Advice = a.Headline
+			row.Command = a.Command
+		}
+		j.VMs = append(j.VMs, row)
+	}
 	j.Pressure.Batches24h = d.Pressure.Batches24h
 	j.Pressure.NearContinuous = d.Pressure.NearContinuous
 	j.Note = d.StoreNote

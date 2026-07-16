@@ -10,6 +10,7 @@ import (
 
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/trend"
+	"github.com/FRIKKern/noo-noo/internal/vmdisk"
 )
 
 // fixtureStatus is a machine with real history: a filling internal disk, a
@@ -212,4 +213,67 @@ func lineContaining(s, substr string) string {
 		}
 	}
 	return ""
+}
+
+// TestStatusRendersVMSection pins the vm-disk wiring (charter D21): a running
+// guest whose datadisk crossed the warn threshold renders in `noo-noo status`
+// with its fill %, the advice headline, and the exact fix command — and the
+// section is SILENT when no VMs exist (the honest empty state, asserted by
+// every other test in this file whose fixture carries no VMs).
+func TestStatusRendersVMSection(t *testing.T) {
+	d := fixtureStatus()
+	vm := vmdisk.VM{
+		Kind: "colima", Name: "default", Running: true,
+		ConfiguredDiskGiB: 60,
+		Datadisk: vmdisk.DiskUsage{
+			Mount: "/var/lib/docker", TotalBytes: 60 << 30, UsedBytes: 57 << 30, Present: true,
+		},
+	}
+	d.VM = vmdisk.Report{
+		VMs: []vmdisk.VM{vm},
+		Advices: []vmdisk.Advice{{
+			VM: vm, Level: vmdisk.AdviceGrow, TargetGiB: 114,
+			Command:  "colima stop && colima start --disk 114",
+			Headline: "colima default: datadisk 60G, 95% full — dockerd at risk; grow to 114G",
+			Detail:   "host volume / has 100G free (need 54G to grow) — safe to grow in place",
+		}},
+	}
+	withStatusFixture(t, d)
+
+	out, _, code := runStatus(t)
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{
+		"VM datadisks",
+		"colima default: datadisk 57G used of 60G (95%)",
+		"dockerd at risk; grow to 114G",
+		"fix: colima stop && colima start --disk 114",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// No VMs → no section header (silence, not a banner).
+	withStatusFixture(t, fixtureStatus())
+	out, _, _ = runStatus(t)
+	if strings.Contains(out, "VM datadisks") {
+		t.Errorf("VM section must be silent with no VMs:\n%s", out)
+	}
+
+	// JSON carries the same row with the advice inlined.
+	withStatusFixture(t, d)
+	jsonOut, _, code := runStatus(t, "-json")
+	if code != 0 {
+		t.Fatalf("json exit = %d", code)
+	}
+	var j statusJSON
+	if err := json.Unmarshal([]byte(jsonOut), &j); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(j.VMs) != 1 || j.VMs[0].PctFull != 95 || j.VMs[0].AdviceLevel != "grow" ||
+		j.VMs[0].Command != "colima stop && colima start --disk 114" {
+		t.Errorf("vm JSON wrong: %+v", j.VMs)
+	}
 }
