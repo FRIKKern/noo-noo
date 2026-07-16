@@ -13,6 +13,8 @@
 package autoclean
 
 import (
+	"strconv"
+
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
 )
 
@@ -49,11 +51,16 @@ type Action struct {
 	SkipReason   string
 }
 
-// suggestionSize extracts size_bytes from a Suggestion's evidence map.
-// Heuristics encode size as either an int64 or a float64 (JSON round
-// trip), so we accept both. Returns 0 if the field is missing or the
-// wrong type — callers treat 0 as "fails the size gate".
+// suggestionSize returns the suggestion's real size in bytes. The
+// first-class SizeBytes field (charter D17) wins when set; otherwise we
+// fall back to the evidence map, where heuristics encode size as int64,
+// float64 (JSON round trip), or string (the store's evidence_json carry
+// renders every value as a string). Returns 0 if nothing parses — callers
+// treat 0 as "fails the size gate".
 func suggestionSize(s heuristics.Suggestion) int64 {
+	if s.SizeBytes > 0 {
+		return s.SizeBytes
+	}
 	if s.Evidence == nil {
 		return 0
 	}
@@ -68,6 +75,13 @@ func suggestionSize(s heuristics.Suggestion) int64 {
 		return int64(n)
 	case float64:
 		return int64(n)
+	case string:
+		if b, err := strconv.ParseInt(n, 10, 64); err == nil {
+			return b
+		}
+		if f, err := strconv.ParseFloat(n, 64); err == nil {
+			return int64(f)
+		}
 	}
 	return 0
 }

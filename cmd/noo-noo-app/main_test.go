@@ -3,6 +3,8 @@ package main
 import (
 	"testing"
 
+	"github.com/FRIKKern/noo-noo/internal/heuristics"
+	"github.com/FRIKKern/noo-noo/internal/ipc"
 	"github.com/FRIKKern/noo-noo/internal/menubar"
 )
 
@@ -34,6 +36,59 @@ func TestWiring_RefreshUpdatesTrayTitle(t *testing.T) {
 		t.Error("menu not set")
 	}
 	_ = app
+}
+
+// TestMapSuggestions pins the wire → menubar projection, including the
+// first-class SizeBytes carry that makes submenu rows show real sizes.
+func TestMapSuggestions(t *testing.T) {
+	items := []ipc.SuggestionAlias{{
+		ID:        7,
+		Module:    "leaks",
+		Target:    "/private/tmp/claude-x",
+		Reason:    "chrome-code-sign-clone: 2.0 GB really reclaimable (proven stale)",
+		RiskLevel: heuristics.RiskLow,
+		SizeBytes: 2 << 30,
+	}}
+	got := mapSuggestions(items)
+	if len(got) != 1 {
+		t.Fatalf("mapped %d suggestions, want 1", len(got))
+	}
+	want := menubar.Suggestion{
+		ID:        7,
+		Module:    "leaks",
+		Reason:    "chrome-code-sign-clone: 2.0 GB really reclaimable (proven stale)",
+		Severity:  "low",
+		SizeBytes: 2 << 30,
+	}
+	if got[0] != want {
+		t.Errorf("mapSuggestions[0] = %+v, want %+v", got[0], want)
+	}
+}
+
+// TestWiring_RefreshRendersSuggestionsSubmenu: the Task-57 nil is gone —
+// a Status carrying suggestions must produce the Suggestions submenu row.
+func TestWiring_RefreshRendersSuggestionsSubmenu(t *testing.T) {
+	tray := &fakeTray{}
+	st := menubar.Status{
+		Running:         true,
+		OpenSuggestions: 1,
+		Suggestions: []menubar.Suggestion{{
+			ID: 1, Module: "leaks", Reason: "leak", Severity: "low", SizeBytes: 1 << 30,
+		}},
+	}
+	refreshTray(tray, st)
+	if tray.menu == nil {
+		t.Fatal("menu not set")
+	}
+	found := false
+	for _, it := range tray.menu.Items {
+		if it.ID == "suggestions" && it.Submenu != nil && len(it.Submenu.Items) == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no populated Suggestions submenu in %+v", tray.menu.Items)
+	}
 }
 
 type fakeTray struct {

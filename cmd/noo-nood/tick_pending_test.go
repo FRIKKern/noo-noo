@@ -49,7 +49,7 @@ func TestPendingAutoApplyAllowedCascade(t *testing.T) {
 
 // tickTestDaemon builds a Daemon whose RunTick is fast and hermetic: no scan
 // roots, heuristics and notifications disabled, temp store.
-func tickTestDaemon(t *testing.T, oc config.OffloadCfg) *Daemon {
+func pendingTickDaemon(t *testing.T, oc config.OffloadCfg) *Daemon {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := config.Defaults()
@@ -58,6 +58,7 @@ func tickTestDaemon(t *testing.T, oc config.OffloadCfg) *Daemon {
 	cfg.Notify.Enabled = false
 	cfg.Heuristics.IdleRepos.Enabled = false
 	cfg.Heuristics.CacheVelocity.Enabled = false
+	cfg.Heuristics.Leaks.Enabled = false // hermetic: never scan the real leak globs in pending tests
 	cfg.Scan.Roots = nil
 	cfg.Scan.CacheRoots = nil
 	cfg.Offload = oc
@@ -96,7 +97,7 @@ func TestRunTickPendingCascadeDispatch(t *testing.T) {
 				called++
 				return nil, nil
 			}
-			d := tickTestDaemon(t, tc.cfg)
+			d := pendingTickDaemon(t, tc.cfg)
 			if err := d.RunTick(context.Background(), tc.trigger); err != nil {
 				t.Fatalf("RunTick: %v", err)
 			}
@@ -112,7 +113,7 @@ func TestRunTickPendingCascadeDispatch(t *testing.T) {
 // pressure tick through the real RunTick — the row must survive
 // byte-for-byte and nothing on disk may move.
 func TestRunTickPressureLeavesQueueUntouched(t *testing.T) {
-	d := tickTestDaemon(t, config.OffloadCfg{
+	d := pendingTickDaemon(t, config.OffloadCfg{
 		DestRoot: "/Volumes/EXT/offload", DestVolumeUUID: "uuid-ext",
 		AutoApplyPending: true, RiskAcknowledgedAt: "2026-07-16T10:00:00Z",
 	})
@@ -189,7 +190,7 @@ func TestRunTickDailyArmedAppliesAtMostOne(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := tickTestDaemon(t, config.OffloadCfg{
+	d := pendingTickDaemon(t, config.OffloadCfg{
 		DestRoot: destRoot, DestVolumeUUID: "uuid-test",
 		AutoApplyPending: true, RiskAcknowledgedAt: "2026-07-16T10:00:00Z",
 	})

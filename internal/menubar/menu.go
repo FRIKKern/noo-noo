@@ -21,10 +21,15 @@ type Menu struct {
 }
 
 // Status mirrors the daemon's Daemon.Status RPC reply (subset).
+// Suggestions carries the open suggestion rows themselves (mapped from the
+// IPC wire type by the app shim) so the dropdown's submenu can render real
+// reasons and sizes, not just a count. The poller passes Status through
+// untouched, so populating this field is all the wiring the submenu needs.
 type Status struct {
 	Running         bool
 	OpenSuggestions int
 	LastScanAt      time.Time
+	Suggestions     []Suggestion
 }
 
 // Suggestion mirrors heuristics.Suggestion (defined in Phase 0.2 task 30).

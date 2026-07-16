@@ -15,6 +15,12 @@ const (
 )
 
 // Suggestion is what every heuristic emits and what the daemon persists.
+//
+// SizeBytes is the REAL reclaimable size (sizer-backed where the emitting
+// heuristic has one — charter D2/D17). It is first-class on the wire, but the
+// store round-trip carries it inside Evidence["size_bytes"] (the evidence_json
+// carry — no suggestions-table column, charter D16); ipc.suggestionFromStored
+// parses it back into this field.
 type Suggestion struct {
 	ID        int64          `json:"id,omitempty"`
 	Module    string         `json:"module"`
@@ -22,5 +28,6 @@ type Suggestion struct {
 	Reason    string         `json:"reason"`
 	Evidence  map[string]any `json:"evidence,omitempty"`
 	RiskLevel RiskLevel      `json:"risk_level"`
+	SizeBytes int64          `json:"size_bytes,omitempty"`
 	CreatedAt time.Time      `json:"created_at"`
 }

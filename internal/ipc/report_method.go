@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
@@ -68,6 +69,11 @@ func (r *ReportService) Full(_ ReportRequest, resp *Report) error {
 // type (heuristics.Suggestion). Severity strings map 1:1 to RiskLevel
 // constants; unknown values pass through as RiskLevel(severity) so the CLI
 // can still render them.
+//
+// SizeBytes is re-hydrated from Evidence["size_bytes"] (the evidence_json
+// carry, charter D16/D17). Stored evidence values are ALWAYS strings after
+// the round-trip — parsing here closes the hole where round-tripped
+// suggestions read size=0 downstream (autoclean's size gate, menubar rows).
 func suggestionFromStored(s store.StoredSuggestion) heuristics.Suggestion {
 	ev := make(map[string]any, len(s.Evidence))
 	for k, v := range s.Evidence {
@@ -80,6 +86,23 @@ func suggestionFromStored(s store.StoredSuggestion) heuristics.Suggestion {
 		Reason:    s.Reason,
 		Evidence:  ev,
 		RiskLevel: heuristics.RiskLevel(s.Severity),
+		SizeBytes: parseSizeBytes(s.Evidence["size_bytes"]),
 		CreatedAt: s.Ts,
 	}
+}
+
+// parseSizeBytes parses the stored string form of size_bytes. Accepts plain
+// integers and (defensively) JSON float renderings; anything unparseable is
+// 0 — the same "fails the size gate" semantics callers already have.
+func parseSizeBytes(v string) int64 {
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return int64(f)
+	}
+	return 0
 }
