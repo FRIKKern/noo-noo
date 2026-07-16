@@ -40,7 +40,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/store"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 // TickTrigger is why a tick is firing. Used by tick.go to gate which steps
 // run (e.g. autoclean is daily-only by design).

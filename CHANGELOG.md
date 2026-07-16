@@ -6,6 +6,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-16
+
+The "disk guardian" release: truth-sized measurement, leak signatures, offload
+to external volumes, and visibility surfaces — born from a real 228 GB Mac that
+kept filling itself (65 leaked Chrome code-sign clones, a du that over-reported
+APFS clones by 40×, and a Docker VM that died silently on a full datadisk).
+
+### Added
+- `internal/sizer` — APFS-truth sizing: `Blocks` (allocated), `UniqueAllocated`
+  (F_LOG2PHYS_EXT extent union — clone- and sparse-aware, so suggestions report
+  REAL reclaimable bytes, never naive-du fiction), `FreedByDelete` (statfs
+  ground truth).
+- `noo-noo leaks scan|list|clean` — data-driven leak-signature registry.
+  Signature #1: Chrome `code_sign_clone` (leaks one ~2 GB self-clone per
+  crash/force-kill; staleness proven via lsof, never mtime). Signature #2:
+  unpurged agent scratch in `/private/tmp`. Apply re-checks staleness at
+  delete time and reports real freed bytes.
+- `noo-noo offload scan|plan|apply|pending|run-pending|cancel` — policy-driven
+  relocation of bulky assets to a UUID-pinned external volume (live write-probe
+  guard; copy → verify → swap → symlink → only then drop). Playbooks are data,
+  templated on your configured `dest_root` — nothing machine-specific. Assets
+  blocked by a running app can be queued with `--defer` (explicit consent) and
+  executed later by `run-pending` or the armed daemon tick.
+- `noo-noo status` — machine posture in one honest statement: disk fill rate,
+  known growers, external volumes with health verdicts (including hardware
+  write-locked media, where repair is impossible and rescue-copy is the only
+  correct move), offload readiness, and pressure posture.
+- `noo-noo trends` — per-asset-class growth sparklines, day-bucketed
+  days-until-full forecasting, and recurrence detection (a leak class that
+  keeps coming back surfaces its permanent remediation, e.g. Chrome's
+  `--disable-features=MacAppCodeSignClone`).
+- `noo-noo orphans list|scan|kill` — detects orphaned automation browsers
+  (headless Chromes whose user-data-dir lives in agent/temp scratch and whose
+  parent job is gone) and terminates them safely (own-uid, reparented-to-init,
+  fresh TOCTOU re-verification before any signal). These orphans are the
+  primary *source* of code-sign-clone leaks.
+- `internal/vmdisk` — VM inner-disk fullness detection for colima/lima: spots
+  a 100 %-full datadisk (silently dead dockerd), suggests a grow sized to
+  demand, gated on proven host-volume headroom.
+- Daemon leak alerts: the leaks registry now runs on scheduler tick and
+  pressure triggers with macOS notifications naming the leak class, real GB,
+  and the one fixing command.
+- `disk_space_history` sampling + readable auto-clean audit trail
+  (`auto_clean events` wired end-to-end).
+- ShipIt (Squirrel.Mac) updater-leftover caches added to the caches module.
+
+### Changed
+- CLI flag law: flags parse AFTER the verb across all subcommands
+  (`noo-noo offload apply -y`); a flag before the verb now errors loudly
+  instead of silently dropping your `-y`.
+- `noo-noo report` includes leaks and offload sections.
+- Scan roots are symlink-resolved (a symlinked root previously never walked).
+
+### Fixed
+- Volume guard resolves the destination's mount point via statfs before the
+  diskutil identity check — subdirectory dest_roots no longer refused.
+- Suggestion sizes are first-class bytes (no more string-typed size=0 holes).
+
 ## [0.5.0] — 2026-05-03
 ### Added
 - Pressure-triggered scans: daemon samples `vm_stat` + free disk every 15 s,
