@@ -36,6 +36,19 @@ func (p *fakeProcs) Running(_ context.Context, pattern string) (bool, error) {
 	return p.running[pattern], nil
 }
 
+// fakePathProbe is an injectable leaks.Prober for path-gate tests: it records
+// the dirs it was asked about and returns a fixed liveness verdict.
+type fakePathProbe struct {
+	live  bool
+	proof string
+	calls []string
+}
+
+func (f *fakePathProbe) probe(_ context.Context, dir string) (bool, string) {
+	f.calls = append(f.calls, dir)
+	return f.live, f.proof
+}
+
 // goCopy is a pure-Go recursive Copier for hermetic tests.
 func goCopy(_ context.Context, src, dst string) error {
 	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
@@ -353,7 +366,8 @@ func TestScanNativeConfigEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := Config{DestRoot: t.TempDir(), DestVolumeUUID: "0DBD1B63-0377-450B-A340-7E72D0925EBC"}
+	destRoot := t.TempDir()
+	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "0DBD1B63-0377-450B-A340-7E72D0925EBC"}
 	m := New(cfg, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy})
 	rep, err := m.Scan(context.Background())
 	if err != nil {
@@ -364,8 +378,11 @@ func TestScanNativeConfigEvidence(t *testing.T) {
 		byAsset[it.Evidence["asset_id"]] = it
 	}
 
+	// Expectations are built from the test's OWN destRoot fixture — the
+	// command is a machine-agnostic template rendered against the configured
+	// destination, never a literal from another machine.
 	wantCmds := map[string]string{
-		"pnpm-store":    "pnpm config set store-dir /Volumes/SATECHI/.pnpm-store --global",
+		"pnpm-store":    "pnpm config set store-dir " + destRoot + "/.pnpm-store --global",
 		"colima":        "COLIMA_HOME",
 		"claude-config": "CLAUDE_CONFIG_DIR",
 	}
@@ -483,6 +500,231 @@ func TestScanUnconfiguredVerdictAndEmptyPlan(t *testing.T) {
 	}
 	if actions := m.Plan(rep); len(actions) != 0 {
 		t.Fatalf("unconfigured offload planned actions: %v", actions)
+	}
+}
+
+// --- {dest_root} templating -------------------------------------------------
+
+// TestScanNativeCommandRendersConfiguredDestRoot: a configured dest_root is
+// substituted into the NativeCommand template at read time — no {dest_root}
+// token and no foreign machine's absolute path leaks through.
+func TestScanNativeCommandRendersConfiguredDestRoot(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "Library", "pnpm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Library", "pnpm", "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destRoot := t.TempDir()
+	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "u"}
+	m := New(cfg, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy})
+	rep, err := m.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cmd string
+	for _, it := range rep.Items {
+		if it.Evidence["asset_id"] == "pnpm-store" {
+			cmd = it.Evidence["native_command"]
+		}
+	}
+	if !strings.Contains(cmd, destRoot) {
+		t.Fatalf("native_command %q does not carry configured destRoot %q", cmd, destRoot)
+	}
+	if strings.Contains(cmd, destRootToken) {
+		t.Fatalf("native_command %q still carries the unrendered %s token", cmd, destRootToken)
+	}
+	if strings.Contains(cmd, "/Volumes/SATECHI") {
+		t.Fatalf("native_command %q still carries a hardcoded machine path", cmd)
+	}
+}
+
+// TestScanNativeCommandPlaceholderWhenUnconfigured: with no dest_root, the
+// command renders the generic placeholder (a fill-in-the-blank template) and
+// the guard verdict carries the "configure [offload] dest_root" guidance.
+func TestScanNativeCommandPlaceholderWhenUnconfigured(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "Library", "pnpm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "Library", "pnpm", "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Unconfigured: the guard must NOT be consulted.
+	m := New(Config{}, nil, Deps{Home: home, Guard: &fakeGuard{err: errors.New("must not be called")}, Procs: &fakeProcs{}, Copy: goCopy})
+	rep, err := m.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cmd, verdict string
+	for _, it := range rep.Items {
+		if it.Evidence["asset_id"] == "pnpm-store" {
+			cmd = it.Evidence["native_command"]
+			verdict = it.Evidence["guard_verdict"]
+		}
+	}
+	if !strings.Contains(cmd, destRootPlaceholder) {
+		t.Fatalf("unconfigured native_command %q does not carry placeholder %q", cmd, destRootPlaceholder)
+	}
+	if strings.Contains(cmd, destRootToken) {
+		t.Fatalf("unconfigured native_command %q still carries the unrendered token", cmd)
+	}
+	if !strings.Contains(verdict, "offload disabled") || !strings.Contains(verdict, "dest_root") {
+		t.Fatalf("verdict %q does not carry the configure-dest_root guidance", verdict)
+	}
+}
+
+// --- path-gated Apply (sub-asset gate) ---------------------------------------
+
+// pathGatedFixture builds the standard relocate fixture but flips the asset to
+// a path-gated (sub-asset) entry.
+func pathGatedFixture(t *testing.T) (home, asset, destRoot string, cfg Config, pbs []Playbook) {
+	t.Helper()
+	home, asset, destRoot, cfg, pbs = fixture(t, "", false)
+	pbs[0].Gate = GatePath
+	return home, asset, destRoot, cfg, pbs
+}
+
+// TestApplyPathGateBlocksWhenLive: a path-gated entry consults the injected
+// PathProber (NOT pgrep) and, on a live verdict (or any fail-safe doubt),
+// refuses the move with the source untouched.
+func TestApplyPathGateBlocksWhenLive(t *testing.T) {
+	home, asset, destRoot, cfg, pbs := pathGatedFixture(t)
+	probe := &fakePathProbe{live: true, proof: "lsof +D: 3 open file(s) — fail-safe LIVE"}
+	procs := &fakeProcs{}
+	m := New(cfg, pbs, Deps{Home: home, Guard: &fakeGuard{}, Procs: procs, Copy: goCopy, PathProbe: probe.probe})
+
+	dest := filepath.Join(destRoot, "asset")
+	_, err := m.Apply(context.Background(), modules.Action{Module: "offload", Op: "relocate", Target: asset, Destination: dest})
+	if err == nil || !strings.Contains(err.Error(), "path-gate") {
+		t.Fatalf("want path-gate refusal, got %v", err)
+	}
+	if !strings.Contains(err.Error(), probe.proof) {
+		t.Fatalf("path-gate error %q does not surface the prober proof", err)
+	}
+	if len(probe.calls) != 1 || probe.calls[0] != asset {
+		t.Fatalf("path prober calls = %v, want [%s]", probe.calls, asset)
+	}
+	if len(procs.calls) != 0 {
+		t.Fatalf("pgrep consulted for a path-gated entry: %v", procs.calls)
+	}
+	if fi, err := os.Lstat(asset); err != nil || !fi.IsDir() {
+		t.Fatalf("source touched despite path-gate: %v %v", fi, err)
+	}
+	if names := mustReadDirNames(t, destRoot); len(names) != 0 {
+		t.Fatalf("destination mutated despite path-gate: %v", names)
+	}
+}
+
+// TestApplyPathGateProceedsWhenClear: an lsof-clean verdict lets the same
+// relocate proceed to a verified symlink swap.
+func TestApplyPathGateProceedsWhenClear(t *testing.T) {
+	home, asset, destRoot, cfg, pbs := pathGatedFixture(t)
+	probe := &fakePathProbe{live: false, proof: "no process holds any file open"}
+	procs := &fakeProcs{}
+	m := New(cfg, pbs, Deps{Home: home, Guard: &fakeGuard{}, Procs: procs, Copy: goCopy, PathProbe: probe.probe})
+
+	dest := filepath.Join(destRoot, "asset")
+	if _, err := m.Apply(context.Background(), modules.Action{Module: "offload", Op: "relocate", Target: asset, Destination: dest}); err != nil {
+		t.Fatalf("path-gate clear should proceed: %v", err)
+	}
+	if len(probe.calls) != 1 || probe.calls[0] != asset {
+		t.Fatalf("path prober calls = %v, want [%s]", probe.calls, asset)
+	}
+	if len(procs.calls) != 0 {
+		t.Fatalf("pgrep consulted for a path-gated entry: %v", procs.calls)
+	}
+	fi, err := os.Lstat(asset)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("target not relocated to a symlink: %v %v", fi, err)
+	}
+}
+
+// TestClaudeJobsRelocatesIndependentlyOfParent: the shipped claude-jobs
+// exemplar is a flat sibling ClassRelocate path-gated entry that plans and
+// applies on its own, while its ClassNativeConfig parent (~/.claude) is never
+// planned and stays a real directory — the live 2026-07-15 win.
+func TestClaudeJobsRelocatesIndependentlyOfParent(t *testing.T) {
+	home := t.TempDir()
+	claude := filepath.Join(home, ".claude")
+	jobs := filepath.Join(claude, "jobs")
+	if err := os.MkdirAll(jobs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claude, "config.json"), []byte("cfg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jobs, "job1.log"), []byte("stale job scratch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destRoot := filepath.Join(t.TempDir(), "offload")
+	if err := os.MkdirAll(destRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{DestRoot: destRoot, DestVolumeUUID: "u"}
+	probe := &fakePathProbe{live: false}
+	m := New(cfg, nil, Deps{Home: home, Guard: &fakeGuard{}, Procs: &fakeProcs{}, Copy: goCopy, PathProbe: probe.probe})
+
+	rep, err := m.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byAsset := map[string]modules.Item{}
+	for _, it := range rep.Items {
+		byAsset[it.Evidence["asset_id"]] = it
+	}
+
+	// Parent is native-config and never a file action; sub-asset is
+	// relocate + path-gated with the parent named cosmetically.
+	if byAsset["claude-config"].Evidence["class"] != string(ClassNativeConfig) {
+		t.Fatalf("claude-config not native-config: %v", byAsset["claude-config"].Evidence)
+	}
+	ji, ok := byAsset["claude-jobs"]
+	if !ok {
+		t.Fatalf("claude-jobs missing from scan (items: %v)", rep.Items)
+	}
+	if ji.Evidence["class"] != string(ClassRelocate) {
+		t.Fatalf("claude-jobs class = %q, want relocate", ji.Evidence["class"])
+	}
+	if ji.Evidence["gate"] != "path" {
+		t.Fatalf("claude-jobs gate = %q, want path", ji.Evidence["gate"])
+	}
+	if ji.Evidence["parent_asset"] != "claude-config" {
+		t.Fatalf("claude-jobs parent_asset = %q, want claude-config", ji.Evidence["parent_asset"])
+	}
+
+	// Plan yields the jobs relocate and NEVER the parent.
+	plan := m.Plan(rep)
+	var jobsAction *modules.Action
+	for i := range plan {
+		if filepath.Clean(plan[i].Target) == filepath.Clean(claude) {
+			t.Fatalf("parent ~/.claude planned for relocation: %v", plan[i])
+		}
+		if filepath.Clean(plan[i].Target) == filepath.Clean(jobs) {
+			jobsAction = &plan[i]
+		}
+	}
+	if jobsAction == nil {
+		t.Fatalf("claude-jobs not planned: %v", plan)
+	}
+
+	// Apply the sub-asset independently: jobs becomes a symlink, parent stays.
+	if _, err := m.Apply(context.Background(), *jobsAction); err != nil {
+		t.Fatalf("apply claude-jobs: %v", err)
+	}
+	if fi, err := os.Lstat(jobs); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("jobs not relocated to a symlink: %v %v", fi, err)
+	}
+	if fi, err := os.Lstat(claude); err != nil || !fi.IsDir() {
+		t.Fatalf("parent ~/.claude damaged by sub-asset relocate: %v %v", fi, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(claude, "config.json")); err != nil || string(b) != "cfg" {
+		t.Fatalf("parent config lost: %q err %v", b, err)
+	}
+	// The probe gated the sub-asset path, not a process.
+	if len(probe.calls) != 1 || probe.calls[0] != jobs {
+		t.Fatalf("path prober calls = %v, want [%s]", probe.calls, jobs)
 	}
 }
 
