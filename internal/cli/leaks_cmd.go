@@ -28,18 +28,14 @@ func leaksCmd(ctx context.Context, app *App, args []string) int {
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	yes := fs.Bool("y", false, "skip confirmation")
 	dryRun := fs.Bool("dry-run", false, "show what would happen")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	verb, code, ok := parseVerb(app, fs, args, "Usage: noo-noo leaks [list|scan|clean]")
+	if !ok {
+		return code
 	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		_, _ = fmt.Fprintln(app.Err, "Usage: noo-noo leaks [list|scan|clean]")
-		return 2
-	}
-	switch rest[0] {
+	switch verb {
 	case "list", "scan", "clean":
 	default:
-		_, _ = fmt.Fprintf(app.Err, "unknown leaks subcommand %q\n", rest[0])
+		_, _ = fmt.Fprintf(app.Err, "unknown leaks subcommand %q\n", verb)
 		return 2
 	}
 	m := newLeaksModule()
@@ -49,7 +45,7 @@ func leaksCmd(ctx context.Context, app *App, args []string) int {
 		_, _ = fmt.Fprintln(app.Err, "scan:", err)
 		return 1
 	}
-	switch rest[0] {
+	switch verb {
 	case "list", "scan":
 		// Diagnose-only: report every hit with its staleness verdict and
 		// truth-sized evidence. Nothing is deleted here.

@@ -54,22 +54,19 @@ var offloadStdin io.Reader = os.Stdin
 const offloadUsage = "Usage: noo-noo offload <scan|plan|apply|pending|run-pending|cancel> [flags]"
 
 func offloadCmd(ctx context.Context, app *App, args []string) int {
-	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
-		_, _ = fmt.Fprintln(app.Err, offloadUsage)
-		return 2
-	}
-	// D22: strip the verb BEFORE flag.Parse — flags come after the verb
-	// (`offload apply --defer -y`), never silently into fs.Args().
-	verb, rest := args[0], args[1:]
-	fs := flag.NewFlagSet("offload "+verb, flag.ContinueOnError)
+	// D22: parseVerb strips the verb before flag.Parse — flags come after the
+	// verb (`offload apply --defer -y`) or before it (legacy), never silently
+	// into fs.Args(); a leftover flag-like token hard-errors.
+	fs := flag.NewFlagSet("offload", flag.ContinueOnError)
 	fs.SetOutput(app.Err)
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	yes := fs.Bool("y", false, "skip confirmation")
 	dryRun := fs.Bool("dry-run", false, "show what would happen")
 	deferQ := fs.Bool("defer", false,
 		"consent to queue a stop-gated relocation for a later safe moment")
-	if err := fs.Parse(rest); err != nil {
-		return 2
+	verb, code, ok := parseVerb(app, fs, args, offloadUsage)
+	if !ok {
+		return code
 	}
 
 	cfg, m := offloadSetup()
