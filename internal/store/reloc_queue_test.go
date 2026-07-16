@@ -63,6 +63,40 @@ func mustEnqueue(t *testing.T, s *Store, e RelocationQueueEntry) int64 {
 	return id
 }
 
+// listPending fails unless ListPendingRelocations returns no error and exactly
+// wantN rows, and returns them. Split out so the round-trip test stays flat
+// (gocyclo).
+func listPending(t *testing.T, s *Store, wantN int) []RelocationQueueEntry {
+	t.Helper()
+	pending, err := s.ListPendingRelocations()
+	if err != nil || len(pending) != wantN {
+		t.Fatalf("pending = %v (err %v), want %d row(s)", pending, err, wantN)
+	}
+	return pending
+}
+
+// markAndResolve runs the two-phase re-check bookkeeping for one entry: mark
+// the attempt at atUnix, then resolve it.
+func markAndResolve(t *testing.T, s *Store, id, atUnix int64, res RelocationResolution) {
+	t.Helper()
+	if err := s.MarkRelocationAttempt(id, atUnix); err != nil {
+		t.Fatalf("mark attempt: %v", err)
+	}
+	if err := s.ResolveRelocation(id, res); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+}
+
+// getRelocation fetches one row, failing the test on error.
+func getRelocation(t *testing.T, s *Store, id int64) RelocationQueueEntry {
+	t.Helper()
+	got, err := s.GetRelocation(id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	return got
+}
+
 // TestEnqueueListResolveRoundTrip walks the full two-phase lifecycle:
 // queued → (attempt) → blocked with reason → (attempt) → applied with freed
 // bytes, checking what ListPendingRelocations shows at every step.
@@ -77,29 +111,16 @@ func TestEnqueueListResolveRoundTrip(t *testing.T) {
 		t.Fatalf("want positive id, got %d", id)
 	}
 
-	pending, err := s.ListPendingRelocations()
-	if err != nil || len(pending) != 1 {
-		t.Fatalf("pending after enqueue = %v (err %v), want 1 row", pending, err)
-	}
-	e := pending[0]
+	e := listPending(t, s, 1)[0]
 	if e.Status != RelocQueued || e.GateReason == "" || e.ResolvedAtUnix != 0 || e.Attempts != 0 {
 		t.Fatalf("fresh row wrong: %+v", e)
 	}
 
 	// Re-check 1: still blocked. Phase 1 then phase 2.
-	if err := s.MarkRelocationAttempt(id, 2000); err != nil {
-		t.Fatalf("mark attempt: %v", err)
-	}
-	if err := s.ResolveRelocation(id, RelocationResolution{
+	markAndResolve(t, s, id, 2000, RelocationResolution{
 		Status: RelocBlocked, BlockedReason: `stop-gate: "Claude" still running`,
-	}); err != nil {
-		t.Fatalf("resolve blocked: %v", err)
-	}
-	pending, err = s.ListPendingRelocations()
-	if err != nil || len(pending) != 1 {
-		t.Fatalf("blocked row must STAY pending, got %v (err %v)", pending, err)
-	}
-	e = pending[0]
+	})
+	e = listPending(t, s, 1)[0]
 	if e.Status != RelocBlocked || e.BlockedReason == "" || e.Attempts != 1 || e.LastAttemptAtUnix != 2000 {
 		t.Fatalf("blocked row wrong: %+v", e)
 	}
@@ -108,22 +129,11 @@ func TestEnqueueListResolveRoundTrip(t *testing.T) {
 	}
 
 	// Re-check 2: the gate cleared; applied.
-	if err := s.MarkRelocationAttempt(id, 3000); err != nil {
-		t.Fatalf("mark attempt 2: %v", err)
-	}
-	if err := s.ResolveRelocation(id, RelocationResolution{
+	markAndResolve(t, s, id, 3000, RelocationResolution{
 		Status: RelocApplied, FreedBytes: 4_000_000_000, ResolvedAtUnix: 3010,
-	}); err != nil {
-		t.Fatalf("resolve applied: %v", err)
-	}
-	pending, err = s.ListPendingRelocations()
-	if err != nil || len(pending) != 0 {
-		t.Fatalf("applied row must leave the pending list, got %v (err %v)", pending, err)
-	}
-	got, err := s.GetRelocation(id)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
+	})
+	listPending(t, s, 0)
+	got := getRelocation(t, s, id)
 	if got.Status != RelocApplied || got.FreedBytes != 4_000_000_000 ||
 		got.ResolvedAtUnix != 3010 || got.Attempts != 2 {
 		t.Fatalf("applied row wrong: %+v", got)

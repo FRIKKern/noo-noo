@@ -133,18 +133,11 @@ func TestTrendsHuman(t *testing.T) {
 	}
 }
 
-func TestTrendsJSON(t *testing.T) {
-	now := time.Now().UTC().Truncate(24 * time.Hour).Add(10 * time.Hour)
-	path, _ := newFixtureStore(t, now)
-
-	out, errOut, code := runTrends(t, "-store", path, "-json")
-	if code != 0 {
-		t.Fatalf("exit = %d (stderr: %s)", code, errOut)
-	}
-
-	var caches []cacheTrendJSON
-	var disks []diskTrendJSON
-	var patterns []patternJSON
+// parseTrendsNDJSON splits the trends -json output into its typed rows by the
+// "kind" discriminator, failing on any malformed or unknown line. Split out so
+// TestTrendsJSON stays flat (gocyclo).
+func parseTrendsNDJSON(t *testing.T, out string) (caches []cacheTrendJSON, disks []diskTrendJSON, patterns []patternJSON) {
+	t.Helper()
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		var kind struct {
 			Kind string `json:"kind"`
@@ -169,33 +162,65 @@ func TestTrendsJSON(t *testing.T) {
 			t.Fatalf("unknown kind %q in line %q", kind.Kind, line)
 		}
 	}
+	return caches, disks, patterns
+}
+
+// findCache returns the cache_trend row for target, or nil.
+func findCache(caches []cacheTrendJSON, target string) *cacheTrendJSON {
+	for i := range caches {
+		if caches[i].Target == target {
+			return &caches[i]
+		}
+	}
+	return nil
+}
+
+// requirePnpmFit checks the pnpm cache row: 5 day-buckets (the burst collapsed)
+// and a day-bucketed fit near 100 MB/day.
+func requirePnpmFit(t *testing.T, c *cacheTrendJSON) {
+	t.Helper()
+	if c.Points != 5 {
+		t.Errorf("pnpm points = %d, want 5 day-buckets (burst must collapse)", c.Points)
+	}
+	if !c.FitOK || c.BytesPerDay < 80_000_000 || c.BytesPerDay > 120_000_000 {
+		t.Errorf("pnpm fit = %+v, want ~100 MB/day", c)
+	}
+}
+
+// requireDiskFit checks the disk row: filling ~1 GB/day with ~46 GB free →
+// ~46 days until full.
+func requireDiskFit(t *testing.T, d diskTrendJSON) {
+	t.Helper()
+	if !d.FitOK || d.BytesPerDay < 900_000_000 || d.BytesPerDay > 1_100_000_000 {
+		t.Errorf("disk fit = %+v, want ~1 GB/day", d)
+	}
+	if !d.FullOK || d.DaysUntilFull < 40 || d.DaysUntilFull > 52 {
+		t.Errorf("days_until_full = %v (ok=%v), want ~46", d.DaysUntilFull, d.FullOK)
+	}
+}
+
+func TestTrendsJSON(t *testing.T) {
+	now := time.Now().UTC().Truncate(24 * time.Hour).Add(10 * time.Hour)
+	path, _ := newFixtureStore(t, now)
+
+	out, errOut, code := runTrends(t, "-store", path, "-json")
+	if code != 0 {
+		t.Fatalf("exit = %d (stderr: %s)", code, errOut)
+	}
+
+	caches, disks, patterns := parseTrendsNDJSON(t, out)
 
 	// pnpm: 5 day-buckets (the 20-sample burst collapsed into day 0), and a
 	// day-bucketed fit close to 100 MB/day — the burst must not distort it
 	// beyond the bucket substitution (last burst sample 500 MB ≈ day-5 value).
-	var pnpm *cacheTrendJSON
-	for i := range caches {
-		if caches[i].Target == "/caches/pnpm" {
-			pnpm = &caches[i]
-		}
-	}
+	pnpm := findCache(caches, "/caches/pnpm")
 	if pnpm == nil {
 		t.Fatalf("no pnpm cache_trend row: %+v", caches)
 	}
-	if pnpm.Points != 5 {
-		t.Errorf("pnpm points = %d, want 5 day-buckets (burst must collapse)", pnpm.Points)
-	}
-	if !pnpm.FitOK || pnpm.BytesPerDay < 80_000_000 || pnpm.BytesPerDay > 120_000_000 {
-		t.Errorf("pnpm fit = %+v, want ~100 MB/day", pnpm)
-	}
+	requirePnpmFit(t, pnpm)
 
 	// lonely: fit refused, no fake precision.
-	var lonely *cacheTrendJSON
-	for i := range caches {
-		if caches[i].Target == "/caches/lonely" {
-			lonely = &caches[i]
-		}
-	}
+	lonely := findCache(caches, "/caches/lonely")
 	if lonely == nil || lonely.FitOK {
 		t.Errorf("lonely target must have fit_ok=false: %+v", lonely)
 	}
@@ -204,13 +229,7 @@ func TestTrendsJSON(t *testing.T) {
 	if len(disks) != 1 {
 		t.Fatalf("disk rows = %d, want 1", len(disks))
 	}
-	d := disks[0]
-	if !d.FitOK || d.BytesPerDay < 900_000_000 || d.BytesPerDay > 1_100_000_000 {
-		t.Errorf("disk fit = %+v, want ~1 GB/day", d)
-	}
-	if !d.FullOK || d.DaysUntilFull < 40 || d.DaysUntilFull > 52 {
-		t.Errorf("days_until_full = %v (ok=%v), want ~46", d.DaysUntilFull, d.FullOK)
-	}
+	requireDiskFit(t, disks[0])
 
 	// recurrence: exactly one pattern, workaround carried verbatim, and the
 	// dismissed first occurrence counted.

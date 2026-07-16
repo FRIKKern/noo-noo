@@ -65,19 +65,46 @@ tmpfs           67108864            0    67108864   0% /dev
 
 // --- Detection ---
 
-func TestDetectColimaParsesProfilesAndDatadisk(t *testing.T) {
-	fr := &fakeRunner{fn: func(env []string, name string, args []string) ([]byte, error) {
-		switch {
-		case name == "colima" && joinArgs(args) == "list --json":
-			// NDJSON: two profiles, disk in bytes (64 GiB).
-			return []byte(`{"name":"default","status":"Running","disk":68719476736}
+// colimaFakeFn scripts `colima list --json` (two profiles, disk in bytes =
+// 64 GiB) and `colima ssh` (df output). Split out so the detection test stays
+// flat (gocyclo).
+func colimaFakeFn(_ []string, name string, args []string) ([]byte, error) {
+	switch {
+	case name == "colima" && joinArgs(args) == "list --json":
+		return []byte(`{"name":"default","status":"Running","disk":68719476736}
 {"name":"builder","status":"Stopped","disk":10737418240}
 `), nil
-		case name == "colima" && args[0] == "ssh":
-			return []byte(dfDockerFull), nil
+	case name == "colima" && args[0] == "ssh":
+		return []byte(dfDockerFull), nil
+	}
+	return nil, errors.New("unexpected call: " + name + " " + joinArgs(args))
+}
+
+// countColimaSSH counts the `colima ssh` calls — the proof the df read never
+// touched a stopped VM.
+func countColimaSSH(calls []fakeCall) int {
+	n := 0
+	for _, c := range calls {
+		if c.name == "colima" && len(c.args) > 0 && c.args[0] == "ssh" {
+			n++
 		}
-		return nil, errors.New("unexpected call: " + name + " " + joinArgs(args))
-	}}
+	}
+	return n
+}
+
+// requireDatadiskPct fails unless dd is present at the given usage percentage.
+func requireDatadiskPct(t *testing.T, dd DiskUsage, wantPct int) {
+	t.Helper()
+	if !dd.Present {
+		t.Fatalf("datadisk not present")
+	}
+	if pct := dd.Pct(); pct != wantPct {
+		t.Errorf("datadisk pct = %d, want %d", pct, wantPct)
+	}
+}
+
+func TestDetectColimaParsesProfilesAndDatadisk(t *testing.T) {
+	fr := &fakeRunner{fn: colimaFakeFn}
 	d := &Detector{Runner: fr, lookPath: lookPathSet("colima")}
 	vms, err := d.Detect(context.Background())
 	if err != nil {
@@ -93,27 +120,16 @@ func TestDetectColimaParsesProfilesAndDatadisk(t *testing.T) {
 	if def.ConfiguredDiskGiB != 64 {
 		t.Errorf("ConfiguredDiskGiB = %d, want 64", def.ConfiguredDiskGiB)
 	}
-	if !def.Datadisk.Present {
-		t.Fatalf("datadisk not present")
-	}
+	requireDatadiskPct(t, def.Datadisk, 91)
 	if def.Datadisk.Mount != "/var/lib/docker" {
 		t.Errorf("datadisk mount = %q, want /var/lib/docker", def.Datadisk.Mount)
-	}
-	if pct := def.Datadisk.Pct(); pct != 91 {
-		t.Errorf("datadisk pct = %d, want 91", pct)
 	}
 	// Stopped profile: no df read, datadisk absent.
 	if vms[1].Running || vms[1].Datadisk.Present {
 		t.Errorf("stopped profile should have no datadisk: %+v", vms[1])
 	}
 	// Prove the df read never touched a stopped VM: exactly one ssh call.
-	sshCalls := 0
-	for _, c := range fr.calls {
-		if c.name == "colima" && len(c.args) > 0 && c.args[0] == "ssh" {
-			sshCalls++
-		}
-	}
-	if sshCalls != 1 {
+	if sshCalls := countColimaSSH(fr.calls); sshCalls != 1 {
 		t.Errorf("want exactly 1 ssh (running only), got %d", sshCalls)
 	}
 }
@@ -131,22 +147,7 @@ func TestDetectLimaInvisibilityTrap(t *testing.T) {
 	}
 	wantEnv := "LIMA_HOME=" + limaTree
 
-	fr := &fakeRunner{fn: func(env []string, name string, args []string) ([]byte, error) {
-		if name == "limactl" && joinArgs(args) == "list --json" {
-			if envHas(env, wantEnv) {
-				return []byte(`{"name":"colima","status":"Running","disk":64424509440}` + "\n"), nil
-			}
-			// Default LIMA_HOME: colima's guest is invisible.
-			return []byte(""), nil
-		}
-		if name == "limactl" && args[0] == "shell" {
-			if !envHas(env, wantEnv) {
-				t.Errorf("df probe ran under wrong LIMA_HOME: %v", env)
-			}
-			return []byte(dfDockerFull), nil
-		}
-		return nil, errors.New("unexpected: " + name + " " + joinArgs(args))
-	}}
+	fr := &fakeRunner{fn: limaFakeFn(t, wantEnv)}
 	d := &Detector{Runner: fr, lookPath: lookPathSet("limactl"), ColimaHome: tmp}
 	vms, err := d.Detect(context.Background())
 	if err != nil {
@@ -162,8 +163,38 @@ func TestDetectLimaInvisibilityTrap(t *testing.T) {
 		t.Errorf("datadisk wrong: %+v", vms[0].Datadisk)
 	}
 	// Prove BOTH homes were probed (default first, then the colima tree).
-	var sawDefault, sawTree bool
-	for _, c := range fr.calls {
+	sawDefault, sawTree := sawBothLimaHomes(fr.calls, wantEnv)
+	if !sawDefault || !sawTree {
+		t.Errorf("expected both LIMA_HOME probes: default=%v tree=%v", sawDefault, sawTree)
+	}
+}
+
+// limaFakeFn scripts `limactl list --json` (the colima guest visible ONLY under
+// the _lima LIMA_HOME) and `limactl shell` (df output). Returning the closure
+// from a helper keeps its branches off the test's gocyclo count.
+func limaFakeFn(t *testing.T, wantEnv string) func([]string, string, []string) ([]byte, error) {
+	return func(env []string, name string, args []string) ([]byte, error) {
+		if name == "limactl" && joinArgs(args) == "list --json" {
+			if envHas(env, wantEnv) {
+				return []byte(`{"name":"colima","status":"Running","disk":64424509440}` + "\n"), nil
+			}
+			// Default LIMA_HOME: colima's guest is invisible.
+			return []byte(""), nil
+		}
+		if name == "limactl" && args[0] == "shell" {
+			if !envHas(env, wantEnv) {
+				t.Errorf("df probe ran under wrong LIMA_HOME: %v", env)
+			}
+			return []byte(dfDockerFull), nil
+		}
+		return nil, errors.New("unexpected: " + name + " " + joinArgs(args))
+	}
+}
+
+// sawBothLimaHomes reports whether both the default LIMA_HOME and the colima
+// _lima tree were probed by `limactl list`.
+func sawBothLimaHomes(calls []fakeCall, wantEnv string) (sawDefault, sawTree bool) {
+	for _, c := range calls {
 		if c.name == "limactl" && joinArgs(c.args) == "list --json" {
 			if len(c.env) == 0 {
 				sawDefault = true
@@ -173,9 +204,7 @@ func TestDetectLimaInvisibilityTrap(t *testing.T) {
 			}
 		}
 	}
-	if !sawDefault || !sawTree {
-		t.Errorf("expected both LIMA_HOME probes: default=%v tree=%v", sawDefault, sawTree)
-	}
+	return sawDefault, sawTree
 }
 
 // TestDetectDedupColimaAcrossSources: when colima IS installed, its guest is

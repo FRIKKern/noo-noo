@@ -50,7 +50,7 @@ func writeFilled(t *testing.T, path string, size int64) {
 	if err != nil {
 		t.Fatalf("create %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, 64*1024)
 	for i := range buf {
 		buf[i] = byte(i%251 + 1)

@@ -179,6 +179,41 @@ func localCopy(_ context.Context, src, dst string) error {
 	})
 }
 
+// requireSymlink fails unless path is a symlink. Split out so the tick tests
+// stay flat (gocyclo).
+func requireSymlink(t *testing.T, path, msg string) {
+	t.Helper()
+	if fi, err := os.Lstat(path); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s: %v %v", msg, fi, err)
+	}
+}
+
+// requireLiveDir fails unless path is a real directory (untouched source).
+func requireLiveDir(t *testing.T, path, msg string) {
+	t.Helper()
+	if fi, err := os.Lstat(path); err != nil || !fi.IsDir() {
+		t.Fatalf("%s: %v %v", msg, fi, err)
+	}
+}
+
+// twoTickAssets builds two relocate-class asset dirs (each a 256-byte file)
+// under home and their playbooks.
+func twoTickAssets(t *testing.T, home string) (assets []string, pbs []offload.Playbook) {
+	t.Helper()
+	assets = make([]string, 2)
+	for i, name := range []string{"older", "newer"} {
+		assets[i] = filepath.Join(home, name)
+		if err := os.MkdirAll(assets[i], 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(assets[i], "f.bin"), []byte(strings.Repeat("x", 256)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pbs = append(pbs, offload.Playbook{AssetID: name, Path: "~/" + name, Class: offload.ClassRelocate})
+	}
+	return assets, pbs
+}
+
 // TestRunTickDailyArmedAppliesAtMostOne drives the REAL engine through the
 // tick seam with two ready queued rows: a fully armed daily tick applies
 // exactly the oldest one (budget 1/tick) and leaves the second pending and
@@ -195,18 +230,7 @@ func TestRunTickDailyArmedAppliesAtMostOne(t *testing.T) {
 		AutoApplyPending: true, RiskAcknowledgedAt: "2026-07-16T10:00:00Z",
 	})
 
-	var pbs []offload.Playbook
-	assets := make([]string, 2)
-	for i, name := range []string{"older", "newer"} {
-		assets[i] = filepath.Join(home, name)
-		if err := os.MkdirAll(assets[i], 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(assets[i], "f.bin"), []byte(strings.Repeat("x", 256)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		pbs = append(pbs, offload.Playbook{AssetID: name, Path: "~/" + name, Class: offload.ClassRelocate})
-	}
+	assets, pbs := twoTickAssets(t, home)
 
 	var ids [2]int64
 	for i, target := range assets {
@@ -245,9 +269,7 @@ func TestRunTickDailyArmedAppliesAtMostOne(t *testing.T) {
 	if older.Status != store.RelocApplied || older.Attempts != 1 || older.FreedBytes <= 0 {
 		t.Fatalf("oldest row not applied with two-phase trail: %+v", older)
 	}
-	if fi, err := os.Lstat(assets[0]); err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("oldest asset not relocated to a symlink: %v %v", fi, err)
-	}
+	requireSymlink(t, assets[0], "oldest asset not relocated to a symlink")
 
 	newer, err := d.store.GetRelocation(ids[1])
 	if err != nil {
@@ -256,9 +278,7 @@ func TestRunTickDailyArmedAppliesAtMostOne(t *testing.T) {
 	if newer.Status != store.RelocQueued || newer.Attempts != 0 {
 		t.Fatalf("budget of 1/tick violated — second row touched: %+v", newer)
 	}
-	if fi, err := os.Lstat(assets[1]); err != nil || !fi.IsDir() {
-		t.Fatalf("second asset touched despite budget: %v %v", fi, err)
-	}
+	requireLiveDir(t, assets[1], "second asset touched despite budget")
 
 	// A second daily tick drains the second entry — the queue empties over
 	// successive ticks, one safe move at a time.

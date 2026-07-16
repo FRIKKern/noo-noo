@@ -173,8 +173,8 @@ func offloadOfferQueue(app *App, cfg config.Config, m *offload.Module, a modules
 		switch {
 		case pb.Gate == offload.GatePath:
 			// Path-gated sub-asset: no single process to quit — the gate
-			// clears when nothing holds files open under the target.
-			gateName = "whatever holds it open"
+			// clears when nothing holds files open under the target. gateName
+			// stays unused here; the messages below name the target directly.
 			clearCondition = fmt.Sprintf("nothing holds files open under %s", a.Target)
 			afterAction = "after closing what holds it open"
 		case pb.StopGate != "":

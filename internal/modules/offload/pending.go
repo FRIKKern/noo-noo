@@ -158,68 +158,9 @@ func (m *Module) RunPending(ctx context.Context, qs QueueStore, trigger string, 
 // passes and budget remains, the two-phase apply (attempt mark -> Apply ->
 // outcome patch).
 func (m *Module) recheckOne(ctx context.Context, qs QueueStore, e RelocationQueueEntry, budget int, attempted *int, now func() time.Time) PendingResult {
-	block := func(reason string, err error) PendingResult {
-		if rerr := qs.ResolveRelocation(e.ID, RelocationResolution{
-			Status:        store.RelocBlocked,
-			BlockedReason: reason,
-		}); rerr != nil {
-			// The row raced to terminal (e.g. cancelled mid-run); report the
-			// original reason, but carry the resolve error too.
-			err = fmt.Errorf("%s (resolve: %v)", reason, rerr)
-		}
-		return PendingResult{Entry: e, Outcome: PendingBlocked, Reason: reason, Err: err}
-	}
-
-	// Gate 0: the destination pin the user consented to must still be the
-	// configured one. A changed [offload] needs fresh consent, never a
-	// silent redirect of a queued move.
-	if e.DestRoot != m.cfg.DestRoot || e.DestVolumeUUID != m.cfg.DestVolumeUUID {
-		return block(fmt.Sprintf("offload destination changed since queued (queued for %s on %s) — cancel and re-queue under the new config", e.DestRoot, e.DestVolumeUUID), nil)
-	}
-
-	// Gate 1: still a known relocate-class playbook asset.
-	pb, ok := m.playbookForTarget(e.TargetPath)
-	if !ok {
-		return block(fmt.Sprintf("%q is no longer a known playbook asset", e.TargetPath), nil)
-	}
-	if pb.Class != ClassRelocate {
-		return block(fmt.Sprintf("asset %q is now class %q — not relocatable by file move", pb.AssetID, pb.Class), nil)
-	}
-
-	// Gate 2: the source must still be a real directory (not already a
-	// symlink from a manual relocation, not deleted).
-	if fi, err := os.Lstat(e.TargetPath); err != nil || !fi.IsDir() {
-		return block(fmt.Sprintf("source %q is missing or no longer a real directory", e.TargetPath), err)
-	}
-
-	// Gate 3: fresh liveness gate — the reason the entry was queued. Same
-	// dispatch as Apply (charter D19): a path-gated sub-asset re-probes its
-	// own subtree for open files (fail-safe: doubt = live = blocked); a
-	// process-gated asset re-checks its stop-gate process.
-	if pb.pathGated() {
-		if live, proof := m.pathProbe(ctx, e.TargetPath); live {
-			return block(fmt.Sprintf("path-gate: %q still in use — %s", e.TargetPath, proof), nil)
-		}
-	} else if pb.StopGate != "" {
-		running, err := m.procs.Running(ctx, pb.StopGate)
-		if err != nil {
-			return block(fmt.Sprintf("stop-gate check for %q failed: %v", pb.StopGate, err), err)
-		}
-		if running {
-			return block(fmt.Sprintf("stop-gate: %q still running", pb.StopGate), nil)
-		}
-	}
-
-	// Gate 4: fresh volume guard against the QUEUED pin (== current config
-	// per gate 0): UUID identity + live write-probe.
-	if err := m.guard.CheckDest(ctx, e.DestRoot, e.DestVolumeUUID); err != nil {
-		return block(fmt.Sprintf("destination refused: %v", err), err)
-	}
-
-	// Gate 5: destination collision.
-	dest := filepath.Join(e.DestRoot, e.PlaybookAssetID)
-	if _, err := os.Lstat(dest); err == nil {
-		return block(fmt.Sprintf("destination %q already exists — refusing to overwrite", dest), nil)
+	dest, blocked := m.recheckGates(ctx, qs, e)
+	if blocked != nil {
+		return *blocked
 	}
 
 	// Budget: gates pass, but the caller's apply allowance is spent. The row
@@ -245,7 +186,7 @@ func (m *Module) recheckOne(ctx context.Context, qs QueueStore, e RelocationQueu
 	})
 	// Phase 2: patch the outcome.
 	if err != nil {
-		out := block(fmt.Sprintf("apply failed: %v", err), err)
+		out := blockRelocation(qs, e, fmt.Sprintf("apply failed: %v", err), err)
 		out.Attempted = true
 		return out
 	}
@@ -260,4 +201,80 @@ func (m *Module) recheckOne(ctx context.Context, qs QueueStore, e RelocationQueu
 			Attempted: true, Err: fmt.Errorf("relocated, but updating the queue row failed: %w", rerr)}
 	}
 	return PendingResult{Entry: e, Outcome: PendingApplied, Freed: res.BytesFreed, Attempted: true}
+}
+
+// blockRelocation resolves an entry as blocked with reason, folding a resolve
+// race (the row went terminal mid-run, e.g. cancelled) into the returned error
+// while still reporting the original reason.
+func blockRelocation(qs QueueStore, e RelocationQueueEntry, reason string, err error) PendingResult {
+	if rerr := qs.ResolveRelocation(e.ID, RelocationResolution{
+		Status:        store.RelocBlocked,
+		BlockedReason: reason,
+	}); rerr != nil {
+		err = fmt.Errorf("%s (resolve: %v)", reason, rerr)
+	}
+	return PendingResult{Entry: e, Outcome: PendingBlocked, Reason: reason, Err: err}
+}
+
+// recheckGates runs gates 0-5 for one entry against fresh state. It returns a
+// non-nil PendingResult (already resolved as blocked) when any gate fails;
+// otherwise it returns the resolved destination path and nil.
+func (m *Module) recheckGates(ctx context.Context, qs QueueStore, e RelocationQueueEntry) (string, *PendingResult) {
+	blk := func(reason string, err error) (string, *PendingResult) {
+		r := blockRelocation(qs, e, reason, err)
+		return "", &r
+	}
+
+	// Gate 0: the destination pin the user consented to must still be the
+	// configured one. A changed [offload] needs fresh consent, never a
+	// silent redirect of a queued move.
+	if e.DestRoot != m.cfg.DestRoot || e.DestVolumeUUID != m.cfg.DestVolumeUUID {
+		return blk(fmt.Sprintf("offload destination changed since queued (queued for %s on %s) — cancel and re-queue under the new config", e.DestRoot, e.DestVolumeUUID), nil)
+	}
+
+	// Gate 1: still a known relocate-class playbook asset.
+	pb, ok := m.playbookForTarget(e.TargetPath)
+	if !ok {
+		return blk(fmt.Sprintf("%q is no longer a known playbook asset", e.TargetPath), nil)
+	}
+	if pb.Class != ClassRelocate {
+		return blk(fmt.Sprintf("asset %q is now class %q — not relocatable by file move", pb.AssetID, pb.Class), nil)
+	}
+
+	// Gate 2: the source must still be a real directory (not already a
+	// symlink from a manual relocation, not deleted).
+	if fi, err := os.Lstat(e.TargetPath); err != nil || !fi.IsDir() {
+		return blk(fmt.Sprintf("source %q is missing or no longer a real directory", e.TargetPath), err)
+	}
+
+	// Gate 3: fresh liveness gate — the reason the entry was queued. Same
+	// dispatch as Apply (charter D19): a path-gated sub-asset re-probes its
+	// own subtree for open files (fail-safe: doubt = live = blocked); a
+	// process-gated asset re-checks its stop-gate process.
+	if pb.pathGated() {
+		if live, proof := m.pathProbe(ctx, e.TargetPath); live {
+			return blk(fmt.Sprintf("path-gate: %q still in use — %s", e.TargetPath, proof), nil)
+		}
+	} else if pb.StopGate != "" {
+		running, err := m.procs.Running(ctx, pb.StopGate)
+		if err != nil {
+			return blk(fmt.Sprintf("stop-gate check for %q failed: %v", pb.StopGate, err), err)
+		}
+		if running {
+			return blk(fmt.Sprintf("stop-gate: %q still running", pb.StopGate), nil)
+		}
+	}
+
+	// Gate 4: fresh volume guard against the QUEUED pin (== current config
+	// per gate 0): UUID identity + live write-probe.
+	if err := m.guard.CheckDest(ctx, e.DestRoot, e.DestVolumeUUID); err != nil {
+		return blk(fmt.Sprintf("destination refused: %v", err), err)
+	}
+
+	// Gate 5: destination collision.
+	dest := filepath.Join(e.DestRoot, e.PlaybookAssetID)
+	if _, err := os.Lstat(dest); err == nil {
+		return blk(fmt.Sprintf("destination %q already exists — refusing to overwrite", dest), nil)
+	}
+	return dest, nil
 }

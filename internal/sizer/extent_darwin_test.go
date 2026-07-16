@@ -91,7 +91,7 @@ func TestExtentWalkMatchesAllocated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -153,11 +153,11 @@ func TestCloneAwareness(t *testing.T) {
 		div[i] = byte(255 - i%251)
 	}
 	if _, err := f.WriteAt(div, 2*testMB); err != nil {
-		f.Close()
+		_ = f.Close()
 		t.Fatalf("diverge write: %v", err)
 	}
 	fullSync(t, f)
-	f.Close()
+	_ = f.Close()
 
 	u2, err := UniqueAllocated(dir)
 	if err != nil {
@@ -256,7 +256,7 @@ func TestUniqueAllocatedThousandFilesUnder2s(t *testing.T) {
 		if err := f.Sync(); err != nil {
 			t.Fatalf("sync %s: %v", p, err)
 		}
-		f.Close()
+		_ = f.Close()
 	}
 
 	start := time.Now()
