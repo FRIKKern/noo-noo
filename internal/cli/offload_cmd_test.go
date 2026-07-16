@@ -164,11 +164,30 @@ func TestOffloadApplyPromptConsent(t *testing.T) {
 // TestOffloadFlagsBeforeVerbHardError: the pre-D22 calling convention is a
 // hard usage error now — never a silent reinterpretation.
 func TestOffloadFlagsBeforeVerbHardError(t *testing.T) {
-	for _, args := range [][]string{{"-y", "apply"}, {"--json", "scan"}, {}} {
+	// Missing verb → usage error.
+	for _, args := range [][]string{{}, {"-y"}} {
 		_, errOut, code := runOffload(t, "", args...)
 		if code != 2 || !strings.Contains(errOut, "Usage: noo-noo offload") {
 			t.Fatalf("args %v: want usage error exit 2, got %d (err %q)", args, code, errOut)
 		}
+	}
+	// Unknown flags hard-error in EITHER position — never a silent no-op.
+	for _, args := range [][]string{{"--bogus", "scan"}, {"scan", "--bogus"}} {
+		_, errOut, code := runOffload(t, "", args...)
+		if code != 2 || errOut == "" {
+			t.Fatalf("args %v: want exit 2 with a loud error, got %d (err %q)", args, code, errOut)
+		}
+	}
+	// Known flags are legal in BOTH orders: offload shares parseVerb with
+	// caches/dev/leaks/startup, which tolerates the legacy flags-then-verb
+	// order (the b8 trust bug was flags AFTER the verb being silently
+	// dropped — both orders now parse, nothing is dropped).
+	out, errOut, code := runOffload(t, "", "--json", "scan")
+	if code != 0 {
+		t.Fatalf("legacy --json scan: want exit 0, got %d (err %q)", code, errOut)
+	}
+	if !strings.Contains(out, "{") {
+		t.Fatalf("legacy --json scan did not honor -json:\n%s", out)
 	}
 }
 
