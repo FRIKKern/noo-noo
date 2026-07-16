@@ -59,8 +59,10 @@ Commands:
                            Find known leak classes (truth-sized, lsof-gated)
   orphans [list|scan|kill] Find orphaned automation browsers (headless,
                            parent job gone) and terminate them safely
-  offload [scan|plan|apply]
+  offload [scan|plan|apply|pending|run-pending|cancel]
                            Offload bulky assets to a pinned external volume
+                           (stop-gated applies can be queued with --defer and
+                           re-checked later via run-pending)
 
 Global flags:
   -y         Skip confirmation prompts

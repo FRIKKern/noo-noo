@@ -20,6 +20,9 @@ func TestStartShutdown(t *testing.T) {
 	// a no-op. The 100ms sleep below shouldn't cross 03:00 anyway, but be safe.
 	cfg.Heuristics.IdleRepos.Enabled = false
 	cfg.Heuristics.CacheVelocity.Enabled = false
+	cfg.Heuristics.Leaks.Enabled = false // default-ON since wave 2; never scan real globs in tests
+	cfg.Scan.Roots = nil                 // never walk the real home tree in tests
+	cfg.Scan.CacheRoots = nil
 
 	st, err := store.Open(cfg.Daemon.StorePath)
 	if err != nil {
@@ -81,6 +84,14 @@ func TestRunScanRespectsDisabledHeuristics(t *testing.T) {
 	cfg.Notify.Enabled = false
 	cfg.Heuristics.IdleRepos.Enabled = false
 	cfg.Heuristics.CacheVelocity.Enabled = false
+	cfg.Heuristics.Leaks.Enabled = false
+	// HERMETIC: runScan is called directly below, so default roots would walk
+	// the REAL home tree. Pre-wave-2 the default ~/Documents/GitHub symlink
+	// was silently skipped (the D25 bug), which masked this; with symlinked
+	// roots resolved the walk became the whole external github tree and this
+	// test ballooned from ~90s to a 10-minute package timeout under load.
+	cfg.Scan.Roots = nil
+	cfg.Scan.CacheRoots = nil
 
 	st, err := store.Open(cfg.Daemon.StorePath)
 	if err != nil {

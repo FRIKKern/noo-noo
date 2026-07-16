@@ -21,7 +21,9 @@ var schemaSQL string
 // new migration files; schema.sql then becomes the union of all of them.
 // v2 folded the former 0005_auto_clean_events.sql migration into schema.sql so
 // the auto_clean_events DDL lives in exactly one place.
-const currentSchemaVersion = 2
+// v3 added the wave-2 tables: relocation_queue (deferred offload relocations,
+// D24) and disk_space_history (posture data layer, D16/D18).
+const currentSchemaVersion = 3
 
 // Store is the noo-noo SQLite handle. Safe for concurrent use; under the hood
 // modernc.org/sqlite serializes writes via a single connection by default.

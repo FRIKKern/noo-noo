@@ -27,6 +27,9 @@ func TestEndToEnd(t *testing.T) {
 	// homedir during `go test`.
 	cfg.Heuristics.IdleRepos.Enabled = false
 	cfg.Heuristics.CacheVelocity.Enabled = false
+	cfg.Heuristics.Leaks.Enabled = false // default-ON since wave 2; never scan real globs in tests
+	cfg.Scan.Roots = nil                 // never walk the real home tree in tests
+	cfg.Scan.CacheRoots = nil
 
 	st, err := store.Open(cfg.Daemon.StorePath)
 	if err != nil {

@@ -24,6 +24,7 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 		return 2
 	}
 
+	_, offloadMod := offloadSetup()
 	all := []modules.Module{
 		dev.New([]string{filepath.Join(homeDir(), "Documents", "GitHub")},
 			core.NewSafety([]string{filepath.Join(homeDir(), "Documents", "GitHub")}, []string{".git"})),
@@ -32,7 +33,7 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 		newLeaksModule(),
 		startup.New(defaultStartupConfig(), startup.ExecRunner{},
 			filepath.Join(auditDir(), "startup-restore.jsonl"), os.Getuid()),
-		newOffloadModule(),
+		offloadMod,
 	}
 
 	var grand core.Bytes

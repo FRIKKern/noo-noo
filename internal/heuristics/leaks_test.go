@@ -96,7 +96,7 @@ func TestLeaksEmitsSuggestionPerStaleHit(t *testing.T) {
 
 func TestLeaksDisabledEmitsNothing(t *testing.T) {
 	src := &fakeLeakSource{rep: modules.Report{
-		Items: []modules.Item{staleCloneItem("/private/tmp/claude-x", 1 << 30)},
+		Items: []modules.Item{staleCloneItem("/private/tmp/claude-x", 1<<30)},
 	}}
 	cfg := config.Defaults()
 	cfg.Heuristics.Leaks.Enabled = false

@@ -29,9 +29,21 @@ type Config struct {
 // relocation can be planned or applied. DestVolumeUUID is the volume's
 // identity (`diskutil info <mount>` → Volume UUID); mount-point names are
 // not identity.
+//
+// AutoApplyPending + RiskAcknowledgedAt arm the daemon's daily-tick re-check
+// of QUEUED relocations (wave 2, D24) — the autoclean-style two-key opt-in:
+// the master switch defaults OFF, and flipping it without also setting the
+// acknowledgement timestamp is treated as not-acknowledged (the daemon
+// refuses to act). Queue entries themselves only ever exist through explicit
+// per-action consent (`offload apply` prompt or --defer); this pair merely
+// lets the daemon run the SAME fresh-gated re-check the user could run by
+// hand with `noo-noo offload run-pending` — budget: 1 apply per daily tick,
+// never on pressure ticks.
 type OffloadCfg struct {
-	DestRoot       string `toml:"dest_root"`
-	DestVolumeUUID string `toml:"dest_volume_uuid"`
+	DestRoot           string `toml:"dest_root"`
+	DestVolumeUUID     string `toml:"dest_volume_uuid"`
+	AutoApplyPending   bool   `toml:"auto_apply_pending"`
+	RiskAcknowledgedAt string `toml:"risk_acknowledged_at"`
 }
 
 // PressureCfg controls the real-time pressure watcher (Phase 0.5). Sampling

@@ -84,7 +84,52 @@ CREATE TABLE IF NOT EXISTS auto_clean_events (
 CREATE INDEX IF NOT EXISTS idx_auto_clean_started ON auto_clean_events(started_at_unix);
 CREATE INDEX IF NOT EXISTS idx_auto_clean_outcome ON auto_clean_events(outcome);
 
--- wave-2: disk-space time-series (posture data layer).
+
+-- v3a: session-safe deferred relocation queue (wave 2, charter D24).
+--
+-- When `offload apply` is refused by a stop-gate (the asset's owning process
+-- is running — the ~/.claude case: you cannot move the config dir of the app
+-- you are running), the user may EXPLICITLY consent to queue the relocation
+-- instead of losing it. This table carries that queued intent through the
+-- two-phase pattern proven by auto_clean_events: an attempt is marked on the
+-- row BEFORE Apply runs (the crash pivot), and the outcome is patched in
+-- after. The row is the STATE; the JSONL audit stays the append-only trail
+-- of actual apply attempts (it structurally cannot carry queued->resolved).
+--
+-- status values:
+--   'queued'    : consented, waiting for a gate re-check
+--   'blocked'   : last re-check failed; blocked_reason says why. STILL
+--                 pending — the next `offload run-pending` or daemon daily
+--                 tick re-checks it fresh. The source is never touched by a
+--                 blocked attempt (offload Apply's restore law).
+--   'applied'   : terminal; freed_bytes + resolved_at_unix populated
+--   'cancelled' : terminal; user withdrew consent (`offload cancel <id>`)
+--
+-- The dest pin (dest_root + dest_volume_uuid) is captured AT QUEUE TIME:
+-- consent was for THAT destination. A re-check refuses (blocks) an entry
+-- whose pin no longer matches the live [offload] config — a changed
+-- destination needs fresh consent, never a silent redirect. Every re-check
+-- runs the full fresh gate set (stop gate, volume guard, destination
+-- collision) — queueing never weakens a single gate.
+CREATE TABLE IF NOT EXISTS relocation_queue (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    queued_at_unix       INTEGER NOT NULL,
+    target_path          TEXT    NOT NULL,
+    playbook_asset_id    TEXT    NOT NULL,
+    dest_root            TEXT    NOT NULL,
+    dest_volume_uuid     TEXT    NOT NULL,
+    gate_reason          TEXT    NOT NULL DEFAULT '',  -- why apply was deferred at queue time
+    status               TEXT    NOT NULL DEFAULT 'queued',  -- 'queued' | 'blocked' | 'applied' | 'cancelled'
+    blocked_reason       TEXT,
+    attempts             INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at_unix INTEGER,
+    resolved_at_unix     INTEGER,
+    freed_bytes          INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_reloc_queue_pending
+    ON relocation_queue(status) WHERE status IN ('queued', 'blocked');
+
+-- v3b (wave-2): disk-space time-series (posture data layer).
 --
 -- One row per (volume, sample): a point-in-time capacity reading for the boot
 -- volume and each mounted /Volumes/* volume. scan.ScanRoots records these,

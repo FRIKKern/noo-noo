@@ -4,15 +4,23 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 
 	"github.com/FRIKKern/noo-noo/internal/autoclean"
 	"github.com/FRIKKern/noo-noo/internal/config"
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
 	"github.com/FRIKKern/noo-noo/internal/leaks"
+	"github.com/FRIKKern/noo-noo/internal/modules/offload"
 	"github.com/FRIKKern/noo-noo/internal/notify"
 	"github.com/FRIKKern/noo-noo/internal/scan"
+	"github.com/FRIKKern/noo-noo/internal/store"
 )
+
+// Compile-time assertion: *store.Store satisfies the relocation-queue surface
+// the offload pending runner consumes. Anchored here, next to the daemon
+// wiring that passes it in (mirrors main.go's EventStore assertion).
+var _ offload.QueueStore = (*store.Store)(nil)
 
 // init swaps the package-level runTickFn (defined in main.go) so the tick
 // consumer goroutine dispatches to RunTick — the autoclean-aware body
@@ -55,12 +63,20 @@ var notifySendFn = notify.Send
 //     evaluate every fresh suggestion against the gates, run Apply for
 //     each pass, and dismiss any suggestion whose target was actually
 //     deleted so the user doesn't see stale entries.
+//     3b. If trigger == daily AND the [offload] auto-apply pair is armed
+//     (auto_apply_pending=true AND risk_acknowledged_at set): re-check
+//     queued relocations with ALL gates fresh and apply AT MOST ONE
+//     (budget 1/tick). Two-phase row updates around the apply; a
+//     still-blocked entry is marked with its reason, source untouched.
 //  4. Notify, with different copy for "freed N bytes" vs.
-//     "M suggestions waiting".
+//     "M suggestions waiting"; a completed deferred relocation sends its
+//     own "relocated X, freed Y internal" notification.
 //
-// Pressure-triggered ticks NEVER reach the autoclean branch (correlates
-// with active dev work; safety design). The autoclean engine itself
-// also refuses any trigger != "daily", so this is defense in depth.
+// Pressure-triggered ticks NEVER reach the autoclean branch OR the
+// pending-relocation branch (pressure correlates with active dev work;
+// safety design). Both engines also refuse any trigger != daily/manual
+// themselves (errPressureTrigger / ErrPendingTriggerForbidden), so this
+// is defense in depth.
 func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	log.Printf("tick start: trigger=%s", trigger)
 
@@ -87,6 +103,13 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 		freed, deleted = d.runAutoClean(ctx, autoCfg, suggestions)
 	}
 
+	// Step 3b: maybe apply ONE queued relocation, behind the full cascade.
+	if ok, why := pendingAutoApplyAllowed(trigger, d.cfg.Offload); ok {
+		d.runPendingRelocations(ctx)
+	} else {
+		log.Printf("pending-relocations: skipped (%s)", why)
+	}
+
 	// Step 4: notify. NEW leak suggestions get their own leak-named copy —
 	// signature, real reclaimable bytes, and the one fixing command — while
 	// everything else keeps the generic tick copy. persistNew already
@@ -96,6 +119,75 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	d.notifyLeaks(leakSugs)
 	d.tickNotify(deleted, freed, len(otherSugs))
 	return nil
+}
+
+// pendingAutoApplyAllowed is the daemon-side gate cascade for auto-applying
+// queued relocations, mirroring autoclean's opt-in law. ALL of:
+//
+//  1. daily trigger only — a pressure tick fires exactly when the user's
+//     machine is busiest; moving directories then is forbidden by design.
+//  2. auto_apply_pending master switch (default OFF).
+//  3. risk_acknowledged_at non-empty — a hand-flipped switch without the
+//     acknowledgement timestamp is treated as not-acknowledged.
+//
+// Pure function: the returned reason string is the log/test-visible verdict.
+func pendingAutoApplyAllowed(trigger TickTrigger, oc config.OffloadCfg) (bool, string) {
+	if trigger != TriggerDaily {
+		return false, "trigger_not_daily"
+	}
+	if !oc.AutoApplyPending {
+		return false, "auto_apply_pending_off"
+	}
+	if oc.RiskAcknowledgedAt == "" {
+		return false, "risk_not_acknowledged"
+	}
+	return true, ""
+}
+
+// runPendingRelocFn is the seam the cascade dispatches through — tests swap
+// it to observe (or fake) the engine call without real volumes. The default
+// runs the production engine: playbooks + deps from module defaults, the
+// daemon's own store as the queue, budget 1 (at most one relocation per
+// daily tick), trigger "daily" (the engine re-refuses anything else).
+var runPendingRelocFn = func(d *Daemon, ctx context.Context) ([]offload.PendingResult, error) {
+	m := offload.New(offload.Config{
+		DestRoot:       d.cfg.Offload.DestRoot,
+		DestVolumeUUID: d.cfg.Offload.DestVolumeUUID,
+	}, nil, offload.Deps{})
+	return m.RunPending(ctx, d.store, offload.TriggerPendingDaily, 1, d.now)
+}
+
+// runPendingRelocations runs the gated engine call and notifies on success
+// with the brief's copy: "relocated X, freed Y internal". Blocked entries
+// are logged (their reason already lives on the queue row for `offload
+// pending` to show); they never notify — waking the user for "still
+// blocked" would train them to ignore noo-noo.
+func (d *Daemon) runPendingRelocations(ctx context.Context) {
+	results, err := runPendingRelocFn(d, ctx)
+	if err != nil {
+		log.Printf("pending-relocations: %v", err)
+		return
+	}
+	for _, r := range results {
+		switch r.Outcome {
+		case offload.PendingApplied:
+			log.Printf("pending-relocations: relocated %s → %s (freed %s locally)",
+				r.Entry.TargetPath, filepath.Join(r.Entry.DestRoot, r.Entry.PlaybookAssetID), humanBytes(int64(r.Freed)))
+			if d.cfg.Notify.Enabled {
+				body := fmt.Sprintf("relocated %s, freed %s internal",
+					filepath.Base(r.Entry.TargetPath), humanBytes(int64(r.Freed)))
+				if err := notify.Send("noo-noo", body, ""); err != nil {
+					log.Printf("notify: %v", err)
+				}
+			}
+		case offload.PendingBlocked:
+			log.Printf("pending-relocations: #%d %s still blocked: %s",
+				r.Entry.ID, r.Entry.TargetPath, r.Reason)
+		default:
+			log.Printf("pending-relocations: #%d %s skipped: %s",
+				r.Entry.ID, r.Entry.TargetPath, r.Reason)
+		}
+	}
 }
 
 // splitLeaks partitions suggestions into leak-module rows and the rest, so
