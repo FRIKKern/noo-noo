@@ -58,7 +58,10 @@ type Item struct {
 // to the user for confirmation before calling Apply.
 type Action struct {
 	Module string
-	Op     string // "delete" | "disable" | "enable" | "clear" | "relocate"
+	Op     string // "delete" | "disable" | "enable" | "clear" | "relocate" | "terminate"
+	// Target names what the op acts on. A filesystem path for every op
+	// except "terminate", where it is the decimal PID of an owned orphan
+	// process (procsig re-verifies identity at apply time).
 	Target string
 	// Destination is where Target ends up for Op "relocate" (move to an
 	// external volume + symlink back). Empty for every other op.
