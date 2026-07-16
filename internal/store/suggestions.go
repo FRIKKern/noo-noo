@@ -66,6 +66,41 @@ func (s *Store) ListOpenSuggestions() ([]StoredSuggestion, error) {
 	return out, rows.Err()
 }
 
+// ListSuggestionsSince returns every suggestion for module with ts >= since,
+// INCLUDING dismissed ones — dismissed_at is deliberately NOT filtered. This is
+// the recurrence read for `noo-noo trends`: a leak class that keeps
+// re-appearing (surfaced, dismissed/cleaned, then re-leaking a week later — the
+// Chrome code_sign_clone shape) is a PATTERN worth a permanent-remediation
+// suggestion, and the history of dismissed rows is exactly the evidence for
+// that. Newest first. Contrast ListOpenSuggestions, which is the live worklist
+// and DOES filter dismissed_at.
+func (s *Store) ListSuggestionsSince(module string, since time.Time) ([]StoredSuggestion, error) {
+	rows, err := s.db.Query(
+		`SELECT id, ts, module, target, reason, evidence_json, severity, dismissed_at
+		   FROM suggestions
+		  WHERE module = ? AND ts >= ?
+		  ORDER BY ts DESC`,
+		module, since.UTC(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []StoredSuggestion
+	for rows.Next() {
+		var sg StoredSuggestion
+		var ev string
+		var dismissed *time.Time
+		if err := rows.Scan(&sg.ID, &sg.Ts, &sg.Module, &sg.Target, &sg.Reason, &ev, &sg.Severity, &dismissed); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(ev), &sg.Evidence)
+		sg.DismissedAt = dismissed
+		out = append(out, sg)
+	}
+	return out, rows.Err()
+}
+
 // DismissSuggestion sets dismissed_at on the given ID.
 func (s *Store) DismissSuggestion(id int64, at time.Time) error {
 	_, err := s.db.Exec(

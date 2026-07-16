@@ -32,6 +32,17 @@ func scanRepos(ctx context.Context, roots []string, st *store.Store) error {
 
 func scanOneRoot(ctx context.Context, root string, st *store.Store) error {
 	now := time.Now()
+	// filepath.WalkDir Lstats the root: if root is itself a symlink it visits
+	// the symlink as a single non-directory entry and stops, never descending
+	// into the target (charter D25 — proven: ~/Documents/GitHub ->
+	// /Volumes/SATECHI/github visited exactly 1 entry, so repo_idleness stayed
+	// empty forever, silently). Home relocations of this shape are common on
+	// exactly the machines noo-noo targets, so resolve the root to its real
+	// path before walking. A broken/missing symlink leaves root unchanged and
+	// WalkDir tolerates the resulting error.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // tolerate per-entry errors
