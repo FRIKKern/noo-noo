@@ -33,9 +33,19 @@ func defaultCacheTargets() []string {
 		"Library/Caches/node-gyp",
 		"Library/Caches/electron",
 	}
-	out := make([]string, len(rels))
-	for i, r := range rels {
-		out[i] = filepath.Join(home, r)
+	out := make([]string, 0, len(rels)+2)
+	for _, r := range rels {
+		out = append(out, filepath.Join(home, r))
+	}
+	// Electron ShipIt updater caches (~/Library/Caches/<bundle-id>.ShipIt)
+	// hold stale downloaded app updates — ~3G across three apps on the
+	// reference machine — regenerated on the next update check, so a safe
+	// delete class. Bundle IDs are build-generated, so match them by glob
+	// rather than literals. filepath.Glob returns only existing paths (and no
+	// error for "no match"), so a machine without any ShipIt dir gains nothing
+	// and the safety root (~/Library/Caches) is unchanged.
+	if matches, err := filepath.Glob(filepath.Join(home, "Library", "Caches", "*.ShipIt")); err == nil {
+		out = append(out, matches...)
 	}
 	return out
 }
@@ -46,13 +56,9 @@ func cachesCmd(ctx context.Context, app *App, args []string) int {
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	yes := fs.Bool("y", false, "skip confirmation")
 	dryRun := fs.Bool("dry-run", false, "show what would happen")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		_, _ = fmt.Fprintln(app.Err, "Usage: noo-noo caches [list|clean]")
-		return 2
+	verb, code, ok := parseVerb(app, fs, args, "Usage: noo-noo caches [list|clean]")
+	if !ok {
+		return code
 	}
 	targets := defaultCacheTargets()
 	safety := core.NewSafety([]string{filepath.Join(homeDir(), "Library", "Caches")}, nil)
@@ -63,7 +69,7 @@ func cachesCmd(ctx context.Context, app *App, args []string) int {
 		_, _ = fmt.Fprintln(app.Err, "scan:", err)
 		return 1
 	}
-	switch rest[0] {
+	switch verb {
 	case "list":
 		_ = PrintReport(app.Out, rep, *asJSON)
 		return 0
@@ -106,7 +112,7 @@ func cachesCmd(ctx context.Context, app *App, args []string) int {
 		}
 		return 0
 	default:
-		_, _ = fmt.Fprintf(app.Err, "unknown caches subcommand %q\n", rest[0])
+		_, _ = fmt.Fprintf(app.Err, "unknown caches subcommand %q\n", verb)
 		return 2
 	}
 }
