@@ -66,6 +66,7 @@ type DaemonCfg struct {
 type HeuristicsCfg struct {
 	IdleRepos     IdleReposCfg     `toml:"idle_repos"`
 	CacheVelocity CacheVelocityCfg `toml:"cache_velocity"`
+	Leaks         LeaksCfg         `toml:"leaks"`
 }
 
 type IdleReposCfg struct {
@@ -78,6 +79,14 @@ type CacheVelocityCfg struct {
 	Enabled          bool    `toml:"enabled"`
 	GrowthMultiplier float64 `toml:"growth_multiplier"`
 	WindowDays       int     `toml:"window_days"`
+}
+
+// LeaksCfg gates the daemon-side leak-signature heuristic. Default ON:
+// the heuristic is diagnose-only (Scan+Plan, never Apply), and the leaks
+// module stays outside autoclean's ModulesAllowed, so enabling it can never
+// delete anything by itself.
+type LeaksCfg struct {
+	Enabled bool `toml:"enabled"`
 }
 
 type NotifyCfg struct {
@@ -113,6 +122,9 @@ func Defaults() Config {
 				Enabled:          true,
 				GrowthMultiplier: 2.0,
 				WindowDays:       7,
+			},
+			Leaks: LeaksCfg{
+				Enabled: true,
 			},
 		},
 		Notify: NotifyCfg{
