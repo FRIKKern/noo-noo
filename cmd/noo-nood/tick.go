@@ -9,6 +9,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/config"
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
+	"github.com/FRIKKern/noo-noo/internal/leaks"
 	"github.com/FRIKKern/noo-noo/internal/notify"
 	"github.com/FRIKKern/noo-noo/internal/scan"
 )
@@ -31,6 +32,20 @@ func init() {
 var autoCleanCfgFn = func(_ config.Config) autoclean.Config {
 	return autoclean.Config{} // Enabled: false — engine refuses every action.
 }
+
+// leakSourceFn builds the leak-signature source the tick's Leaks heuristic
+// scans. A function variable (same pattern as autoCleanCfgFn/runTickFn) so
+// tests can substitute a fake source without touching real system paths or
+// spawning lsof. The default is the shipped registry behind the same Safety
+// the autoclean branch uses; the heuristic only ever calls Scan+Plan on it —
+// diagnose-only by construction.
+var leakSourceFn = func(d *Daemon) heuristics.LeakSource {
+	return leaks.New(leaks.DefaultSignatures(), core.NewSafety(d.cfg.Scan.Roots, []string{".git"}))
+}
+
+// notifySendFn is the notification sink, injectable so tests can capture
+// the exact user-facing copy instead of posting real macOS notifications.
+var notifySendFn = notify.Send
 
 // RunTick is the per-trigger entrypoint registered by init() above. Steps:
 //
@@ -72,9 +87,29 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 		freed, deleted = d.runAutoClean(ctx, autoCfg, suggestions)
 	}
 
-	// Step 4: notify. Different copy for cleaned vs. suggestions-only.
-	d.tickNotify(deleted, freed, len(suggestions))
+	// Step 4: notify. NEW leak suggestions get their own leak-named copy —
+	// signature, real reclaimable bytes, and the one fixing command — while
+	// everything else keeps the generic tick copy. persistNew already
+	// deduped against open rows (HasOpenSuggestion), so a leak target alerts
+	// once, not on every tick it stays unfixed.
+	leakSugs, otherSugs := splitLeaks(suggestions)
+	d.notifyLeaks(leakSugs)
+	d.tickNotify(deleted, freed, len(otherSugs))
 	return nil
+}
+
+// splitLeaks partitions suggestions into leak-module rows and the rest, so
+// the notification step can give leaks their signature-named copy without
+// double-counting them in the generic "N new suggestion(s)" message.
+func splitLeaks(in []heuristics.Suggestion) (leakSugs, others []heuristics.Suggestion) {
+	for _, s := range in {
+		if s.Module == "leaks" {
+			leakSugs = append(leakSugs, s)
+		} else {
+			others = append(others, s)
+		}
+	}
+	return leakSugs, others
 }
 
 // collectSuggestions runs every enabled heuristic and returns the union.
@@ -88,6 +123,9 @@ func (d *Daemon) collectSuggestions(ctx context.Context) []heuristics.Suggestion
 	}
 	if d.cfg.Heuristics.CacheVelocity.Enabled {
 		all = append(all, heuristics.CacheVelocity(ctx, d.store, d.cfg)...)
+	}
+	if d.cfg.Heuristics.Leaks.Enabled {
+		all = append(all, heuristics.Leaks(ctx, leakSourceFn(d), d.cfg)...)
 	}
 	return all
 }
@@ -171,10 +209,75 @@ func (d *Daemon) tickNotify(deleted int, freed int64, suggestionsLeft int) {
 	switch {
 	case deleted > 0:
 		body := fmt.Sprintf("freed %s; %d suggestion(s) remain", humanBytes(freed), suggestionsLeft)
-		_ = notify.Send("noo-noo", body, "")
+		_ = notifySendFn("noo-noo", body, "")
 	case suggestionsLeft > 0:
 		body := fmt.Sprintf("%d new suggestion(s). Run noo-noo suggestions list.", suggestionsLeft)
-		_ = notify.Send("noo-noo", body, "")
+		_ = notifySendFn("noo-noo", body, "")
+	}
+}
+
+// leakAlert is one leak-named notification: signature, real reclaimable
+// bytes, and the fixing command, aggregated per signature class.
+type leakAlert struct {
+	Title string
+	Body  string
+}
+
+// leakAlerts builds the leak-named notification copy from NEW leak
+// suggestions. One alert per signature class (a tick that finds 3 Chrome
+// clones sends one Chrome alert, not three): the body names the signature,
+// the summed REAL reclaimable bytes (sizer-backed SizeBytes), the hit count,
+// and — verbatim — the workaround that stops the leak class at its source.
+// Pure function so tests assert the exact copy.
+func leakAlerts(sugs []heuristics.Suggestion) []leakAlert {
+	type agg struct {
+		bytes      int64
+		count      int
+		workaround string
+	}
+	var order []string
+	bySig := map[string]*agg{}
+	for _, s := range sugs {
+		sig, _ := s.Evidence["signature"].(string)
+		if sig == "" {
+			sig = "unknown-leak"
+		}
+		a, ok := bySig[sig]
+		if !ok {
+			a = &agg{}
+			bySig[sig] = a
+			order = append(order, sig)
+		}
+		a.bytes += s.SizeBytes
+		a.count++
+		if w, _ := s.Evidence["workaround"].(string); w != "" {
+			a.workaround = w
+		}
+	}
+	out := make([]leakAlert, 0, len(order))
+	for _, sig := range order {
+		a := bySig[sig]
+		body := fmt.Sprintf("%s: %s really reclaimable (%d leak(s)). Run noo-noo leaks clean.",
+			sig, humanBytes(a.bytes), a.count)
+		if a.workaround != "" {
+			body += " Fix: " + a.workaround
+		}
+		out = append(out, leakAlert{Title: "noo-noo — disk leak", Body: body})
+	}
+	return out
+}
+
+// notifyLeaks posts one leak-named notification per signature class found
+// this tick. Dedup against re-alerting rides persistNew's HasOpenSuggestion
+// filter: callers pass only NEWLY-persisted suggestions.
+func (d *Daemon) notifyLeaks(sugs []heuristics.Suggestion) {
+	if !d.cfg.Notify.Enabled || len(sugs) == 0 {
+		return
+	}
+	for _, al := range leakAlerts(sugs) {
+		if err := notifySendFn(al.Title, al.Body, ""); err != nil {
+			log.Printf("notify leak: %v", err)
+		}
 	}
 }
 

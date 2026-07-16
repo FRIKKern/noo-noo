@@ -41,6 +41,41 @@ func TestPoller_FiresImmediatelyAndOnInterval(t *testing.T) {
 	}
 }
 
+// suggestionsClient returns a Status carrying suggestion rows, proving the
+// poller passes them through to onUpdate untouched (the submenu's data path).
+type suggestionsClient struct{}
+
+func (suggestionsClient) Status() (Status, error) {
+	return Status{
+		Running:         true,
+		OpenSuggestions: 1,
+		Suggestions: []Suggestion{{
+			ID: 1, Module: "leaks", Reason: "leak", Severity: "low", SizeBytes: 1 << 30,
+		}},
+	}, nil
+}
+
+func TestPoller_PassesSuggestionsThrough(t *testing.T) {
+	got := make(chan Status, 1)
+	p := NewPoller(suggestionsClient{}, time.Minute, func(s Status) {
+		select {
+		case got <- s:
+		default:
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	go p.Run(ctx)
+	select {
+	case st := <-got:
+		if len(st.Suggestions) != 1 || st.Suggestions[0].SizeBytes != 1<<30 {
+			t.Errorf("Suggestions did not survive the poller: %+v", st.Suggestions)
+		}
+	case <-ctx.Done():
+		t.Fatal("no update within 200ms")
+	}
+}
+
 func TestPoller_BacksOffOnError(t *testing.T) {
 	c := &fakeClient{err: errors.New("dial: refused")}
 	p := NewPoller(c, 10*time.Millisecond, func(Status) {})

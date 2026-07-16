@@ -57,7 +57,7 @@ func refreshTray(t Tray, st menubar.Status) {
 		t.SetTitle("")
 		t.SetIcon(menubar.ForState(menubar.StateIdle))
 	}
-	t.SetMenu(menubar.Build(st, nil)) // suggestions submenu wired in Task 57
+	t.SetMenu(menubar.Build(st, st.Suggestions))
 }
 
 // appHandler implements menubar.Handler against the live Wails app and IPC
@@ -113,12 +113,31 @@ func (s *ipcClientShim) Status() (menubar.Status, error) {
 		return menubar.Status{}, err
 	}
 	st := menubar.Status{Running: r.Running}
-	// Suggestion count is a best-effort second call; failure is non-fatal so
+	// Suggestions are a best-effort second call; failure is non-fatal so
 	// the tray still updates the daemon-up badge.
 	if items, err := s.c.SuggestionsList(); err == nil {
 		st.OpenSuggestions = len(items)
+		st.Suggestions = mapSuggestions(items)
 	}
 	return st, nil
+}
+
+// mapSuggestions projects the IPC wire suggestions (heuristics.Suggestion)
+// onto the dependency-free menubar rows. SizeBytes rides the first-class
+// field re-hydrated by the daemon from the store carry, so submenu rows show
+// real reclaimable sizes. Pure function so tests assert the mapping.
+func mapSuggestions(items []ipc.SuggestionAlias) []menubar.Suggestion {
+	out := make([]menubar.Suggestion, 0, len(items))
+	for _, s := range items {
+		out = append(out, menubar.Suggestion{
+			ID:        int(s.ID),
+			Module:    s.Module,
+			Reason:    s.Reason,
+			Severity:  string(s.RiskLevel),
+			SizeBytes: s.SizeBytes,
+		})
+	}
+	return out
 }
 
 // trayAdapter wraps the Wails tray so it satisfies our Tray interface.
