@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -101,17 +102,21 @@ type Daemon struct {
 	// falls back to cfg.AutoClean when this is nil (legacy test path).
 	autoCleanCfg *ipc.AutoCleanConfig
 	// lastTickNew is the new-suggestion count of the most recent tick,
-	// recorded by RunTick for TriggerScan's reply. Best-effort under
-	// concurrent ticks — the reply is informational, not a ledger.
+	// recorded by RunTick for TriggerScan's reply.
 	lastTickNew atomic.Int64
+	// tickMu serializes RunTick across its two entry points (the trig
+	// channel consumer and manualKicker's synchronous IPC path). Proven
+	// necessary the hard way: an unserialized manual tick overlapping a
+	// pressure tick deadlocked both on the store's single-writer lock and
+	// froze the daemon at zero CPU with no further tick logs.
+	tickMu sync.Mutex
 }
 
 // manualKicker satisfies ipc.SchedulerKicker by running one manual tick
 // synchronously. It bypasses the trig channel on purpose: the caller of
 // `daemon force-scan` wants the scan's outcome in the reply, not a queued
-// promise. Overlap with a concurrently-scheduled tick is possible and
-// accepted — every stage of RunTick is safe to re-run (scan upserts,
-// persistNew dedupes, autoclean re-proves staleness per delete).
+// promise. RunTick's tickMu makes the overlap with a concurrently-scheduled
+// tick safe: the manual tick simply waits its turn.
 type manualKicker struct {
 	d   *Daemon
 	ctx context.Context

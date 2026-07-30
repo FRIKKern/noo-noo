@@ -80,6 +80,11 @@ var notifySendFn = notify.Send
 // themselves (errPressureTrigger / ErrPendingTriggerForbidden), so this
 // is defense in depth.
 func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
+	// One tick at a time, whichever door it came through (scheduler
+	// consumer, pressure watcher via the consumer, or the synchronous
+	// force-scan RPC). Concurrent ticks deadlock on the store.
+	d.tickMu.Lock()
+	defer d.tickMu.Unlock()
 	log.Printf("tick start: trigger=%s", trigger)
 
 	// Step 1: walk the filesystem -> populate fresh data.
