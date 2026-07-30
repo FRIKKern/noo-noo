@@ -12,9 +12,11 @@ import (
 
 // LeakSource is the diagnose-only subset of the leaks module this heuristic
 // drives: Scan finds signature hits (live and stale), Plan filters to the
-// provably-stale, deletable subset. Apply is deliberately absent — the daemon
-// SURFACES leaks; it never deletes them (leaks stays outside autoclean's
-// ModulesAllowed, and this interface cannot express a delete).
+// provably-stale, deletable subset. Apply is deliberately absent — this
+// interface cannot express a delete. Deletion happens ONLY through
+// autoclean's leaks deleter (leaks.Module.Apply, which re-proves staleness
+// at delete time), and only when the operator has opted "leaks" into
+// auto_clean.modules_allowed.
 type LeakSource interface {
 	Scan(ctx context.Context) (modules.Report, error)
 	Plan(r modules.Report) []modules.Action

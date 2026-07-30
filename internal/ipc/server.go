@@ -62,6 +62,15 @@ type DaemonService struct {
 	sched SchedulerKicker
 }
 
+// WithScheduler wires the TriggerScan backend and returns the service for
+// literal-style chaining in main.go. Without this call every force-scan
+// answers "no scheduler wired" — before the nil guard existed it was worse:
+// the unset field panicked the daemon on the first Run Scan Now.
+func (d *DaemonService) WithScheduler(k SchedulerKicker) *DaemonService {
+	d.sched = k
+	return d
+}
+
 // Server listens on a Unix socket and dispatches JSON-RPC requests.
 type Server struct {
 	socketPath string

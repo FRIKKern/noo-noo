@@ -120,6 +120,9 @@ func printLeakDetails(app *App, rep modules.Report) {
 		if ev["lsof"] != "" {
 			_, _ = fmt.Fprintf(app.Out, "  liveness: %s\n", ev["lsof"])
 		}
+		if ev["causality"] != "" {
+			_, _ = fmt.Fprintf(app.Out, "  alias arbitration: %s\n", ev["causality"])
+		}
 		if ev["age"] != "" {
 			_, _ = fmt.Fprintf(app.Out, "  age: %s\n", ev["age"])
 		}

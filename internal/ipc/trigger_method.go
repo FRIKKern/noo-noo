@@ -1,6 +1,9 @@
 package ipc
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // SchedulerKicker is the subset of *daemon.Scheduler this method needs.
 // Defining it here lets us test the IPC layer without importing the daemon
@@ -16,6 +19,13 @@ type SchedulerKicker interface {
 // scheduler's responsibility; this method is a thin shell so the IPC
 // surface stays uniform with Status, Report.Full, etc.
 func (s *DaemonService) TriggerScan(_ TriggerScanArgs, reply *TriggerScanReply) error {
+	if s.sched == nil {
+		// net/rpc runs handlers on live goroutines: a panic here doesn't
+		// fail one call, it kills the whole daemon (found the hard way —
+		// every force-scan crashed noo-nood until this guard existed).
+		reply.Ok = false
+		return errors.New("trigger scan: no scheduler wired into this daemon build")
+	}
 	added, dur, err := s.sched.TriggerNow()
 	if err != nil {
 		reply.Ok = false

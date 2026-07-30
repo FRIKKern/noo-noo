@@ -160,12 +160,13 @@ func TestApplyHappyPath_AuditBeforeAndAfter(t *testing.T) {
 }
 
 func TestApply_RejectsNonDailyTrigger(t *testing.T) {
-	// Pressure-triggered deletes are forbidden by design. The check
+	// Pressure-triggered deletes are forbidden by design ("manual" is
+	// allowed: an operator-requested scan is explicit consent). The check
 	// fires before any audit row is written so the audit table stays
 	// silent for "shouldn't have been called" cases.
 	tmp := t.TempDir()
 	e, st, seen := newEngineForTest(t, tmp)
-	for _, trig := range []string{"pressure", "manual", "", "DAILY", "Daily"} {
+	for _, trig := range []string{"pressure", "", "DAILY", "Daily", "MANUAL"} {
 		_, err := e.Apply(context.Background(), Action{
 			Module: "dev", TargetPath: filepath.Join(tmp, "x"),
 		}, trig)
@@ -277,5 +278,44 @@ func TestApply_DeleterErrorWritesErroredRow(t *testing.T) {
 	}
 	if errMsg != "disk-was-on-fire" {
 		t.Errorf("error_msg = %q, want 'disk-was-on-fire'", errMsg)
+	}
+}
+
+// Leak targets live outside the scan roots by nature; the root walls (guard
+// checks 1 and 3) are replaced by the leaks deleter's own signature-scoped
+// predicate. This pins that a leaks action outside every root deletes, while
+// a dev action outside the roots still refuses.
+func TestApply_LeaksBypassesRootWallsDevDoesNot(t *testing.T) {
+	tmp := t.TempDir()
+	st := newMemEventStore(t)
+	seen := &[]string{}
+	cfg := Config{
+		Enabled:            true,
+		ModulesAllowed:     []string{"dev", "leaks"},
+		MinIdleDays:        0,
+		MinSizeMB:          0,
+		SizeCapPerTickGB:   10,
+		RiskAcknowledgedAt: "2026-05-01T00:00:00Z",
+	}
+	e := New(st, cfg, []string{tmp}, core.NewSafety([]string{tmp}, []string{".git"}), map[string]Deleter{
+		"dev":   stubDeleter(2048, seen),
+		"leaks": stubDeleter(4096, seen),
+	})
+
+	outside := "/private/var/folders/xx/yy/X/app.code_sign_clone/code_sign_clone.abc123"
+	res, err := e.Apply(context.Background(), Action{
+		SuggestionID: 1, Module: "leaks", TargetPath: outside, SizeBytes: 1,
+	}, "daily")
+	if err != nil {
+		t.Fatalf("leaks apply outside roots refused: %v", err)
+	}
+	if res.FreedBytes != 4096 || len(*seen) != 1 || (*seen)[0] != outside {
+		t.Fatalf("leaks deleter not invoked as expected: %+v seen=%v", res, *seen)
+	}
+
+	if _, err := e.Apply(context.Background(), Action{
+		SuggestionID: 2, Module: "dev", TargetPath: outside, SizeBytes: 1,
+	}, "daily"); err == nil {
+		t.Fatal("dev apply outside roots was allowed")
 	}
 }

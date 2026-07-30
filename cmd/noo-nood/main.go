@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -99,6 +100,27 @@ type Daemon struct {
 	// tick observes the change without a config reload. Nil-safe: tick.go
 	// falls back to cfg.AutoClean when this is nil (legacy test path).
 	autoCleanCfg *ipc.AutoCleanConfig
+	// lastTickNew is the new-suggestion count of the most recent tick,
+	// recorded by RunTick for TriggerScan's reply. Best-effort under
+	// concurrent ticks — the reply is informational, not a ledger.
+	lastTickNew atomic.Int64
+}
+
+// manualKicker satisfies ipc.SchedulerKicker by running one manual tick
+// synchronously. It bypasses the trig channel on purpose: the caller of
+// `daemon force-scan` wants the scan's outcome in the reply, not a queued
+// promise. Overlap with a concurrently-scheduled tick is possible and
+// accepted — every stage of RunTick is safe to re-run (scan upserts,
+// persistNew dedupes, autoclean re-proves staleness per delete).
+type manualKicker struct {
+	d   *Daemon
+	ctx context.Context
+}
+
+func (k *manualKicker) TriggerNow() (int, time.Duration, error) {
+	start := time.Now()
+	err := runTickFn(k.d, k.ctx, TriggerManual)
+	return int(k.d.lastTickNew.Load()), time.Since(start), err
 }
 
 // newDaemon retains the lowercase constructor name so existing tests
@@ -154,10 +176,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		Report:      &ipc.ReportService{Store: d.store},
 		Suggestions: &ipc.SuggestionsService{Store: d.store},
 		Clean:       &ipc.CleanService{Store: d.store},
-		Daemon: &ipc.DaemonService{
+		Daemon: (&ipc.DaemonService{
 			StartedAt: func() time.Time { return d.started },
 			Version:   version,
-		},
+		}).WithScheduler(&manualKicker{d: d, ctx: ctx}),
 		// stats=d.store: *store.Store implements AutoCleanStatsSince, so
 		// AutoClean.Status reports the real 7-day deletion count and freed
 		// bytes from the auto_clean_events ledger (zero, honestly, until the

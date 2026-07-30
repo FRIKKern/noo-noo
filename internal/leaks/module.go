@@ -22,7 +22,10 @@ type Module struct {
 	sigs   []Signature
 	safety *core.Safety
 	probe  Prober // liveness probe; defaults to LsofProbe, injectable in tests
-	uid    int    // only hits owned by this uid are considered
+	// causal arbitrates hardlink-alias LIVE verdicts for signatures with
+	// AliasLaunchCausality; defaults to causalCheck, injectable in tests.
+	causal func(ctx context.Context, path string) (stale bool, proof string)
+	uid    int // only hits owned by this uid are considered
 	now    func() time.Time
 }
 
@@ -34,6 +37,7 @@ func New(sigs []Signature, safety *core.Safety) *Module {
 		sigs:   sigs,
 		safety: safety,
 		probe:  LsofProbe,
+		causal: causalCheck,
 		uid:    os.Getuid(),
 		now:    time.Now,
 	}
@@ -229,7 +233,19 @@ func (m *Module) classify(ctx context.Context, sig Signature, path string, ev ma
 	}
 	live, proof := m.probe(ctx, path)
 	ev["lsof"] = proof
-	return !live
+	if !live {
+		return true
+	}
+	// The probe matches by inode, so a hardlink alias can hold a leaked
+	// tree hostage (second founding incident). Signatures that opt in get
+	// the causality arbitration; its proof trail lands in evidence either
+	// way, so a LIVE verdict always shows WHY causality declined.
+	if sig.Alias == AliasLaunchCausality {
+		stale, cproof := m.causal(ctx, path)
+		ev["causality"] = cproof
+		return stale
+	}
+	return false
 }
 
 // newestMtime returns the newest modification time anywhere in the tree at

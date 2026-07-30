@@ -66,6 +66,10 @@ type Signature struct {
 	// MinAge is the age gate for StaleWhenAgedAndLsofEmpty (ignored
 	// otherwise): the newest mtime in the tree must be older than this.
 	MinAge time.Duration
+	// Alias picks the hardlink-alias handling when the lsof probe reports
+	// LIVE (see AliasRule in causality.go). Zero value AliasNone keeps the
+	// probe's verdict untouched.
+	Alias AliasRule
 	// Risk is the risk level attached to delete actions for stale hits.
 	Risk modules.RiskLevel
 	// Workaround is evidence-cited advice that prevents the leak class at
@@ -83,10 +87,17 @@ func DefaultSignatures() []Signature {
 			Globs: []string{
 				"/private/var/folders/*/*/X/*.code_sign_clone/code_sign_clone.??????",
 			},
-			// mtime is PROVEN unsafe here: a 6-day-old clone was held open
-			// by 7 live Chrome processes as txt segments. lsof-empty is the
-			// ONLY staleness signal for this class.
+			// mtime AGE alone is PROVEN unsafe here: a 6-day-old clone was
+			// held open by 7 live Chrome processes as txt segments. lsof-empty
+			// is the primary staleness signal — but lsof matches by inode,
+			// and Chrome hardlinks ONE launcher binary into every clone, so
+			// one live Chrome made all 48 leaked clones probe LIVE (73 GB
+			// undeletable, disk to zero — the second founding incident).
+			// Launch causality arbitrates: txt-only matches by processes
+			// younger than the whole tree are inode aliases via the newer
+			// active clone, and the tree is provably stale.
 			Staleness: StaleWhenLsofEmpty,
+			Alias:     AliasLaunchCausality,
 			Risk:      modules.RiskLow,
 			Workaround: "Chrome leaks one code-sign clone per crash/force-kill. " +
 				"Quit and relaunch Chrome cleanly, or launch with " +
@@ -96,7 +107,11 @@ func DefaultSignatures() []Signature {
 			ID:    "private-tmp-agent-scratch",
 			Title: "Stale agent scratch under /private/tmp (never OS-cleaned)",
 			Globs: []string{
-				"/private/tmp/claude-*",
+				// Per-session depth, not the claude-* root: the root stays
+				// warm for months while individual session dirs inside go
+				// cold — cleaning at the root would either never fire (the
+				// age gate sees the newest session) or nuke live sessions.
+				"/private/tmp/claude-*/*/*",
 				"/private/tmp/*-gocache*",
 				"/private/tmp/*gocache.*",
 			},
@@ -109,6 +124,22 @@ func DefaultSignatures() []Signature {
 			Workaround: "Agent sessions recreate scratch dirs on demand; nothing regenerable " +
 				"is lost. macOS never cleans /private/tmp on this machine — without noo-noo " +
 				"this class only grows.",
+		},
+		{
+			ID:    "darwin-t-agent-trial",
+			Title: "Abandoned agent trial workdirs under $TMPDIR (T/)",
+			Globs: []string{
+				"/private/var/folders/*/*/T/grip-trial-*",
+			},
+			// Trial workdirs are disposable by contract (mktemp naming) but
+			// a run can legitimately span hours; two idle days plus nothing
+			// held open proves the experiment is over. 30 of these held
+			// 16 GB when the class was first identified.
+			Staleness: StaleWhenAgedAndLsofEmpty,
+			MinAge:    48 * time.Hour,
+			Risk:      modules.RiskLow,
+			Workaround: "Trial harnesses should remove their workdir on exit (trap cleanup), " +
+				"or create it under a session scratchpad that already has an owner.",
 		},
 	}
 }

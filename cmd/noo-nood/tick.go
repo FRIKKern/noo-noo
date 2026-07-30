@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/FRIKKern/noo-noo/internal/autoclean"
@@ -11,6 +12,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/heuristics"
 	"github.com/FRIKKern/noo-noo/internal/leaks"
+	"github.com/FRIKKern/noo-noo/internal/modules"
 	"github.com/FRIKKern/noo-noo/internal/modules/offload"
 	"github.com/FRIKKern/noo-noo/internal/notify"
 	"github.com/FRIKKern/noo-noo/internal/scan"
@@ -92,15 +94,25 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	// dismisses by id, so we need real ids on the in-memory rows. The
 	// updated slice has ID populated for every newly-inserted row.
 	suggestions = d.persistNew(suggestions)
+	d.lastTickNew.Store(int64(len(suggestions)))
 
 	// Step 3: maybe auto-clean. Two preconditions:
 	//   - daily trigger only (defense in depth — engine also enforces).
 	//   - autoCleanCfgFn returns a config with Enabled=true.
+	//
+	// Cleanable = fresh suggestions PLUS still-open leak rows. Fresh-only
+	// was a one-shot trap for leaks: a clone that is LIVE on the tick that
+	// first proves a sibling stale files no row, and the row it DOES file
+	// later is deduped as already-open forever after — 26 proven-stale
+	// suggestions sat open while the disk ran to zero. Leak deletes are
+	// safe to retry every tick because the leaks deleter re-proves
+	// staleness at delete time; dev rows stay fresh-only.
 	var freed int64
 	var deleted int
 	autoCfg := autoCleanCfgFn(d.cfg)
-	if trigger == TriggerDaily && autoCfg.Enabled {
-		freed, deleted = d.runAutoClean(ctx, autoCfg, suggestions)
+	if (trigger == TriggerDaily || trigger == TriggerManual) && autoCfg.Enabled {
+		cleanable := append(suggestions, d.openLeakSuggestions(suggestions)...)
+		freed, deleted = d.runAutoClean(ctx, autoCfg, cleanable, trigger.String())
 	}
 
 	// Step 3b: maybe apply ONE queued relocation, behind the full cascade.
@@ -250,13 +262,62 @@ func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion 
 	return out
 }
 
+// openLeakSuggestions loads still-open leaks-module rows from the store,
+// minus any already present in fresh (persistNew just inserted those), so
+// the auto-clean branch can retry proven-stale leaks on every tick instead
+// of exactly once. Only the fields the gate cascade and deleter consume are
+// projected; a store failure yields nothing (fail-quiet — next tick retries).
+func (d *Daemon) openLeakSuggestions(fresh []heuristics.Suggestion) []heuristics.Suggestion {
+	rows, err := d.store.ListOpenSuggestions()
+	if err != nil {
+		log.Printf("autoclean: list open leak suggestions: %v", err)
+		return nil
+	}
+	seen := make(map[int64]bool, len(fresh))
+	for _, s := range fresh {
+		seen[s.ID] = true
+	}
+	var out []heuristics.Suggestion
+	for _, r := range rows {
+		if r.Module != "leaks" || seen[r.ID] {
+			continue
+		}
+		// A target that vanished (manual clean, reboot purge) can never be
+		// applied again — retrying would error every tick forever. Dismiss
+		// it here: the row's purpose (get the bytes back) is fulfilled.
+		if _, err := os.Lstat(r.Target); os.IsNotExist(err) {
+			if err := d.store.DismissSuggestion(r.ID, d.now()); err != nil {
+				log.Printf("autoclean: dismiss gone target id=%d: %v", r.ID, err)
+			}
+			continue
+		}
+		out = append(out, heuristics.Suggestion{
+			ID:     r.ID,
+			Module: r.Module,
+			Target: r.Target,
+			Reason: r.Reason,
+		})
+	}
+	return out
+}
+
 // runAutoClean evaluates each suggestion against the gates, applies the
 // ones that pass, and dismisses any suggestion whose target was deleted.
-// Returns (freed bytes, count of successful deletes).
-func (d *Daemon) runAutoClean(ctx context.Context, cfg autoclean.Config, suggestions []heuristics.Suggestion) (int64, int) {
+// trigger is the tick's trigger name ("daily" or "manual" — the engine
+// refuses anything else). Returns (freed bytes, count of successful deletes).
+func (d *Daemon) runAutoClean(ctx context.Context, cfg autoclean.Config, suggestions []heuristics.Suggestion, trigger string) (int64, int) {
 	safety := core.NewSafety(d.cfg.Scan.Roots, []string{".git"})
+	// The leaks deleter is the leaks module itself: signature-scoped path
+	// predicate plus an apply-time staleness re-proof (TOCTOU guard) — a
+	// STRICTER wall than the root allowlist the dev deleter lives behind.
+	// Same no-roots Safety as the CLI's newLeaksModule (charter D4).
+	leaksMod := leaks.New(leaks.DefaultSignatures(), core.NewSafety(nil, nil))
 	eng := autoclean.New(d.store, cfg, d.cfg.Scan.Roots, safety, map[string]autoclean.Deleter{
 		"dev": autoclean.DefaultDeleter,
+		"leaks": func(ctx context.Context, path string) (int64, error) {
+			res, err := leaksMod.Apply(ctx, modules.Action{Module: "leaks", Op: "delete", Target: path})
+			return int64(res.BytesFreed), err
+		},
 	})
 	budget := autoclean.NewBudget(cfg.SizeCapPerTickGB)
 
@@ -273,7 +334,7 @@ func (d *Daemon) runAutoClean(ctx context.Context, cfg autoclean.Config, suggest
 				budget.Used(), budget.Cap())
 			break
 		}
-		res, err := eng.Apply(ctx, action, "daily")
+		res, err := eng.Apply(ctx, action, trigger)
 		if err != nil {
 			log.Printf("autoclean: apply id=%d: %v", s.ID, err)
 			continue

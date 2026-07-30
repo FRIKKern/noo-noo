@@ -155,17 +155,26 @@ func EvaluateSuggestion(s heuristics.Suggestion, cfg Config) (Action, bool) {
 		return a, false
 	}
 
-	// Gate 3: idleness.
-	if a.IdleDays < cfg.MinIdleDays {
-		a.SkipReason = "idle_too_short"
-		return a, false
-	}
+	// Gates 3+4 carry dev-artifact semantics (repo idleness, worth-the-risk
+	// size) and are MEANINGLESS for leak suggestions: a leak is emitted only
+	// when provably stale (lsof-proven at scan, re-proven at delete by the
+	// leaks module's own Apply), it never has idle_days evidence (so the
+	// idle gate would silently veto every one — how 26 proven-stale
+	// suggestions sat open while the disk ran to zero), and proven garbage
+	// of any size should go.
+	if s.Module != "leaks" {
+		// Gate 3: idleness.
+		if a.IdleDays < cfg.MinIdleDays {
+			a.SkipReason = "idle_too_short"
+			return a, false
+		}
 
-	// Gate 4: minimum size. Convert MiB threshold into bytes.
-	minBytes := int64(cfg.MinSizeMB) * 1024 * 1024
-	if a.SizeBytes < minBytes {
-		a.SkipReason = "size_too_small"
-		return a, false
+		// Gate 4: minimum size. Convert MiB threshold into bytes.
+		minBytes := int64(cfg.MinSizeMB) * 1024 * 1024
+		if a.SizeBytes < minBytes {
+			a.SkipReason = "size_too_small"
+			return a, false
+		}
 	}
 
 	return a, true

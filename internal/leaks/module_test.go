@@ -363,7 +363,11 @@ func TestDefaultSignaturesShape(t *testing.T) {
 	if scratch.MinAge != 7*24*time.Hour {
 		t.Errorf("scratch MinAge = %s, want 168h", scratch.MinAge)
 	}
-	for _, p := range []string{"/private/tmp/claude-501", "/private/tmp/foo-gocache-1", "/private/tmp/x.gocache.9"} {
+	for _, p := range []string{
+		"/private/tmp/claude-501/-Volumes-repo/0a1b2c3d-session", // per-session depth
+		"/private/tmp/foo-gocache-1",
+		"/private/tmp/x.gocache.9",
+	} {
 		var matched bool
 		for _, g := range scratch.Globs {
 			if ok, _ := filepath.Match(g, p); ok {
@@ -373,6 +377,41 @@ func TestDefaultSignaturesShape(t *testing.T) {
 		if !matched {
 			t.Errorf("scratch globs %v must match %s", scratch.Globs, p)
 		}
+	}
+}
+
+// TestScratchAndTrialSignatureShape pins the session-depth and trial-dir
+// signatures added after the second founding incident.
+func TestScratchAndTrialSignatureShape(t *testing.T) {
+	byID := map[string]Signature{}
+	for _, s := range DefaultSignatures() {
+		byID[s.ID] = s
+	}
+
+	// The claude-* ROOT must NOT match: it stays warm for months while
+	// sessions inside go cold — root-level cleaning would either never fire
+	// or nuke live sessions.
+	for _, g := range byID["private-tmp-agent-scratch"].Globs {
+		if ok, _ := filepath.Match(g, "/private/tmp/claude-501"); ok {
+			t.Errorf("glob %s matches the claude session root — must match session depth only", g)
+		}
+	}
+
+	trial, ok := byID["darwin-t-agent-trial"]
+	if !ok {
+		t.Fatal("darwin-t-agent-trial signature missing")
+	}
+	if trial.Staleness != StaleWhenAgedAndLsofEmpty || trial.MinAge != 48*time.Hour {
+		t.Errorf("trial signature gates = %v/%s, want aged+lsof-empty/48h", trial.Staleness, trial.MinAge)
+	}
+	var trialMatch bool
+	for _, g := range trial.Globs {
+		if ok, _ := filepath.Match(g, "/private/var/folders/hb/18wmml0n5495w28s_1z_8flh0000gn/T/grip-trial-zPrCwr"); ok {
+			trialMatch = true
+		}
+	}
+	if !trialMatch {
+		t.Errorf("trial globs %v must match a real grip-trial dir", trial.Globs)
 	}
 }
 

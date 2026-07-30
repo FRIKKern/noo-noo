@@ -111,9 +111,12 @@ type ErrorResult struct {
 }
 
 // errPressureTrigger is returned when Apply is called with any trigger
-// other than "daily". The plan's reasoning: pressure events correlate
-// with active dev work where mid-flight deletions are most dangerous.
-var errPressureTrigger = errors.New("autoclean: trigger must be 'daily' (pressure-driven deletes are forbidden)")
+// other than "daily" or "manual". The plan's reasoning: pressure events
+// correlate with active dev work where mid-flight deletions are most
+// dangerous. Manual is allowed — an operator explicitly asking for a scan
+// is the strongest consent signal there is, and it doubles as the
+// on-demand "clean now" verb.
+var errPressureTrigger = errors.New("autoclean: trigger must be 'daily' or 'manual' (pressure-driven deletes are forbidden)")
 
 // safetyGuard does last-line checks at delete time. Failures here ALWAYS
 // abort the deletion. Three checks:
@@ -128,26 +131,17 @@ func (e *Engine) safetyGuard(action Action) error {
 		return fmt.Errorf("safety: abs path: %w", err)
 	}
 
+	// Leak targets live OUTSIDE the scan roots by nature (/private/var/…),
+	// so checks 1 and 3 — both root-allowlist walls — would veto every one.
+	// Their replacement is STRICTER, not weaker: the leaks deleter is
+	// leaks.Module.Apply, which refuses any path that doesn't match a
+	// registered signature glob (CanDeleteLeakTarget) and re-proves
+	// staleness at delete time (TOCTOU guard). Checks 2 and 4 still apply.
+	isLeaks := action.Module == "leaks"
+
 	// 1. resolves under one of the configured roots.
-	if len(e.roots) > 0 {
-		underRoot := false
-		for _, root := range e.roots {
-			rabs, err := filepath.Abs(root)
-			if err != nil {
-				continue
-			}
-			rel, err := filepath.Rel(rabs, abs)
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(rel, "..") && rel != "." {
-				underRoot = true
-				break
-			}
-		}
-		if !underRoot {
-			return errors.New("safety: target not under any configured root")
-		}
+	if !isLeaks && !underAnyRoot(abs, e.roots) {
+		return errors.New("safety: target not under any configured root")
 	}
 
 	// 2. module name in allowlist (defense in depth).
@@ -162,8 +156,8 @@ func (e *Engine) safetyGuard(action Action) error {
 		return errors.New("safety: module not in allowlist")
 	}
 
-	// 3. core.Safety.CanDelete — NEVER bypass. Same logic as manual CLI.
-	if e.safety != nil {
+	// 3. core.Safety.CanDelete — NEVER bypass for root-scoped modules.
+	if !isLeaks && e.safety != nil {
 		if err := e.safety.CanDelete(abs); err != nil {
 			return fmt.Errorf("safety: %w", err)
 		}
@@ -175,6 +169,29 @@ func (e *Engine) safetyGuard(action Action) error {
 	}
 
 	return nil
+}
+
+// underAnyRoot reports whether abs resolves inside one of roots. An empty
+// roots list is permissive (no wall configured), matching the original
+// inline check's semantics.
+func underAnyRoot(abs string, roots []string) bool {
+	if len(roots) == 0 {
+		return true
+	}
+	for _, root := range roots {
+		rabs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(rabs, abs)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(rel, "..") && rel != "." {
+			return true
+		}
+	}
+	return false
 }
 
 // suggestionIDStr is a small helper because the suggestions table uses
@@ -198,7 +215,7 @@ func suggestionIDStr(id int64) string {
 // killed between 3 and 5, recovery sees a stranded in_progress row and
 // can re-stat the path.
 func (e *Engine) Apply(ctx context.Context, action Action, trigger string) (Result, error) {
-	if trigger != "daily" {
+	if trigger != "daily" && trigger != "manual" {
 		return Result{}, errPressureTrigger
 	}
 	now := time.Now().Unix()

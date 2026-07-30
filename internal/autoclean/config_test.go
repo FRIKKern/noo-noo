@@ -130,3 +130,33 @@ func TestEvidenceMissingFails(t *testing.T) {
 		t.Fatalf("missing evidence should fail idle gate; got ok=%v reason=%s", ok, a.SkipReason)
 	}
 }
+
+// Leak suggestions carry no idle_days and their size is not a risk proxy —
+// staleness is lsof-proven at scan AND re-proven at delete. Gates 3+4 are
+// therefore leaks-exempt; the allowlist gate is not.
+func TestEvaluateLeaksExemptFromIdleAndSizeGates(t *testing.T) {
+	cfg := Config{
+		Enabled:            true,
+		ModulesAllowed:     []string{"leaks"},
+		MinIdleDays:        90,
+		MinSizeMB:          1024,
+		RiskAcknowledgedAt: "2026-05-01T00:00:00Z",
+	}
+	s := heuristics.Suggestion{
+		ID:     7,
+		Module: "leaks",
+		Target: "/private/var/folders/xx/yy/X/app.code_sign_clone/code_sign_clone.abc123",
+		// No idle_days, tiny size: both dev gates would veto.
+		SizeBytes: 500 * 1024,
+	}
+	a, ok := EvaluateSuggestion(s, cfg)
+	if !ok {
+		t.Fatalf("leaks suggestion blocked: %s", a.SkipReason)
+	}
+
+	cfg.ModulesAllowed = []string{"dev"}
+	a, ok = EvaluateSuggestion(s, cfg)
+	if ok || a.SkipReason != "module_not_allowed" {
+		t.Fatalf("allowlist gate skipped for leaks: ok=%v reason=%s", ok, a.SkipReason)
+	}
+}
