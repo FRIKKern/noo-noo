@@ -156,13 +156,13 @@ func EvaluateSuggestion(s heuristics.Suggestion, cfg Config) (Action, bool) {
 	}
 
 	// Gates 3+4 carry dev-artifact semantics (repo idleness, worth-the-risk
-	// size) and are MEANINGLESS for leak suggestions: a leak is emitted only
-	// when provably stale (lsof-proven at scan, re-proven at delete by the
-	// leaks module's own Apply), it never has idle_days evidence (so the
-	// idle gate would silently veto every one — how 26 proven-stale
-	// suggestions sat open while the disk ran to zero), and proven garbage
-	// of any size should go.
-	if s.Module != "leaks" {
+	// size) and are MEANINGLESS for self-proving modules: their suggestions
+	// exist only when provably dead (lsof/git-proven at scan, re-proven at
+	// delete by the module's own Apply), they never carry idle_days
+	// evidence (so the idle gate would silently veto every one — how 26
+	// proven-stale leak suggestions sat open while the disk ran to zero),
+	// and proven garbage of any size should go.
+	if !selfProving(s.Module) {
 		// Gate 3: idleness.
 		if a.IdleDays < cfg.MinIdleDays {
 			a.SkipReason = "idle_too_short"
@@ -178,4 +178,12 @@ func EvaluateSuggestion(s heuristics.Suggestion, cfg Config) (Action, bool) {
 	}
 
 	return a, true
+}
+
+// selfProving names the modules whose suggestions carry their own proof of
+// deletability and re-prove it at delete time: leaks (lsof/causality) and
+// worktrees (git clean+merged+remote-contained). They are exempt from the
+// dev-artifact gates here and from the root walls in safetyGuard.
+func selfProving(module string) bool {
+	return module == "leaks" || module == "worktrees"
 }

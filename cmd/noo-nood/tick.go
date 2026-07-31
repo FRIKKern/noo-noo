@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/FRIKKern/noo-noo/internal/autoclean"
 	"github.com/FRIKKern/noo-noo/internal/config"
@@ -17,6 +18,7 @@ import (
 	"github.com/FRIKKern/noo-noo/internal/notify"
 	"github.com/FRIKKern/noo-noo/internal/scan"
 	"github.com/FRIKKern/noo-noo/internal/store"
+	"github.com/FRIKKern/noo-noo/internal/worktrees"
 )
 
 // Compile-time assertion: *store.Store satisfies the relocation-queue surface
@@ -236,7 +238,30 @@ func (d *Daemon) collectSuggestions(ctx context.Context) []heuristics.Suggestion
 	if d.cfg.Heuristics.Leaks.Enabled {
 		all = append(all, heuristics.Leaks(ctx, leakSourceFn(d), d.cfg)...)
 	}
+	all = append(all, heuristics.Worktrees(ctx, worktreeSourceFn(d), d.cfg.Worktrees.Enabled)...)
 	return all
+}
+
+// worktreeSourceFn builds the worktree sweeper the tick's heuristic scans —
+// a function variable (same pattern as leakSourceFn) so tests can substitute
+// a fake without real repos or lsof. [worktrees] roots fall back to the
+// [scan] roots so one setting drives both.
+var worktreeSourceFn = func(d *Daemon) heuristics.WorktreeSource {
+	return worktrees.New(worktreeConfig(d))
+}
+
+// worktreeConfig snapshots the daemon config into the module's own type.
+func worktreeConfig(d *Daemon) worktrees.Config {
+	roots := d.cfg.Worktrees.Roots
+	if len(roots) == 0 {
+		roots = d.cfg.Scan.Roots
+	}
+	return worktrees.Config{
+		Roots:    roots,
+		MinIdle:  time.Duration(d.cfg.Worktrees.MinIdleHours) * time.Hour,
+		JudgeCmd: d.cfg.Worktrees.JudgeCmd,
+		GraveDir: d.cfg.Worktrees.GraveDir,
+	}
 }
 
 // persistNew inserts each suggestion that is not already represented by
@@ -267,11 +292,12 @@ func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion 
 	return out
 }
 
-// openLeakSuggestions loads still-open leaks-module rows from the store,
-// minus any already present in fresh (persistNew just inserted those), so
-// the auto-clean branch can retry proven-stale leaks on every tick instead
-// of exactly once. Only the fields the gate cascade and deleter consume are
-// projected; a store failure yields nothing (fail-quiet — next tick retries).
+// openLeakSuggestions loads still-open self-proving rows (leaks, worktrees)
+// from the store, minus any already present in fresh (persistNew just
+// inserted those), so the auto-clean branch can retry proven-dead targets
+// on every tick instead of exactly once. Only the fields the gate cascade
+// and deleter consume are projected; a store failure yields nothing
+// (fail-quiet — next tick retries).
 func (d *Daemon) openLeakSuggestions(fresh []heuristics.Suggestion) []heuristics.Suggestion {
 	rows, err := d.store.ListOpenSuggestions()
 	if err != nil {
@@ -284,7 +310,7 @@ func (d *Daemon) openLeakSuggestions(fresh []heuristics.Suggestion) []heuristics
 	}
 	var out []heuristics.Suggestion
 	for _, r := range rows {
-		if r.Module != "leaks" || seen[r.ID] {
+		if (r.Module != "leaks" && r.Module != "worktrees") || seen[r.ID] {
 			continue
 		}
 		// A target that vanished (manual clean, reboot purge) can never be
@@ -317,10 +343,18 @@ func (d *Daemon) runAutoClean(ctx context.Context, cfg autoclean.Config, suggest
 	// STRICTER wall than the root allowlist the dev deleter lives behind.
 	// Same no-roots Safety as the CLI's newLeaksModule (charter D4).
 	leaksMod := leaks.New(leaks.DefaultSignatures(), core.NewSafety(nil, nil))
+	wtMod := worktrees.New(worktreeConfig(d))
 	eng := autoclean.New(d.store, cfg, d.cfg.Scan.Roots, safety, map[string]autoclean.Deleter{
 		"dev": autoclean.DefaultDeleter,
 		"leaks": func(ctx context.Context, path string) (int64, error) {
 			res, err := leaksMod.Apply(ctx, modules.Action{Module: "leaks", Op: "delete", Target: path})
+			return int64(res.BytesFreed), err
+		},
+		// Same contract as leaks: the module's own Apply re-proves the
+		// obvious tier at delete time and refuses anything else, so a
+		// judgment-tier row can never slip through this deleter.
+		"worktrees": func(ctx context.Context, path string) (int64, error) {
+			res, err := wtMod.Apply(ctx, modules.Action{Module: "worktrees", Op: "delete", Target: path})
 			return int64(res.BytesFreed), err
 		},
 	})

@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Daemon     DaemonCfg     `toml:"daemon"`
 	Heuristics HeuristicsCfg `toml:"heuristics"`
+	Worktrees  WorktreesCfg  `toml:"worktrees"`
 	Notify     NotifyCfg     `toml:"notify"`
 	Scan       ScanCfg       `toml:"scan"`
 	Pressure   PressureCfg   `toml:"pressure"`
@@ -97,6 +98,24 @@ type CacheVelocityCfg struct {
 // the heuristic is diagnose-only (Scan+Plan, never Apply), and the leaks
 // module stays outside autoclean's ModulesAllowed, so enabling it can never
 // delete anything by itself.
+// WorktreesCfg is the [worktrees] section: the finished-worktree sweeper.
+type WorktreesCfg struct {
+	// Enabled gates the daemon-side heuristic (suggestions on every tick).
+	// The CLI verbs work regardless.
+	Enabled bool `toml:"enabled"`
+	// Roots to discover repos under; empty falls back to [scan] roots.
+	Roots []string `toml:"roots"`
+	// MinIdleHours is the freshness wall (default 12): a worktree touched
+	// more recently is never a candidate, whatever else is true of it.
+	MinIdleHours int `toml:"min_idle_hours"`
+	// JudgeCmd is the AI judge for the judgment tier (e.g. "claude -p").
+	// Empty = judgment rows are report-only.
+	JudgeCmd string `toml:"judge_cmd"`
+	// GraveDir receives HEAD bundles + dirty-file archives before any
+	// judged force-removal.
+	GraveDir string `toml:"grave_dir"`
+}
+
 type LeaksCfg struct {
 	Enabled bool `toml:"enabled"`
 }
@@ -138,6 +157,11 @@ func Defaults() Config {
 			Leaks: LeaksCfg{
 				Enabled: true,
 			},
+		},
+		Worktrees: WorktreesCfg{
+			Enabled:      true,
+			MinIdleHours: 12,
+			GraveDir:     filepath.Join(home, "Library", "Application Support", "noo-noo", "worktree-graves"),
 		},
 		Notify: NotifyCfg{
 			Enabled:     true,
@@ -193,6 +217,10 @@ func Load(path string) (Config, error) {
 	}
 	for i, r := range cfg.Scan.CacheRoots {
 		cfg.Scan.CacheRoots[i] = expandTilde(r)
+	}
+	cfg.Worktrees.GraveDir = expandTilde(cfg.Worktrees.GraveDir)
+	for i, r := range cfg.Worktrees.Roots {
+		cfg.Worktrees.Roots[i] = expandTilde(r)
 	}
 	return cfg, nil
 }

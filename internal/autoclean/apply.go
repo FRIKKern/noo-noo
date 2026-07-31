@@ -131,16 +131,18 @@ func (e *Engine) safetyGuard(action Action) error {
 		return fmt.Errorf("safety: abs path: %w", err)
 	}
 
-	// Leak targets live OUTSIDE the scan roots by nature (/private/var/…),
-	// so checks 1 and 3 — both root-allowlist walls — would veto every one.
-	// Their replacement is STRICTER, not weaker: the leaks deleter is
-	// leaks.Module.Apply, which refuses any path that doesn't match a
-	// registered signature glob (CanDeleteLeakTarget) and re-proves
-	// staleness at delete time (TOCTOU guard). Checks 2 and 4 still apply.
-	isLeaks := action.Module == "leaks"
+	// Self-proving targets live OUTSIDE the scan roots by nature (leak dirs
+	// under /private/var/…, worktrees anywhere git registered them), so
+	// checks 1 and 3 — both root-allowlist walls — would veto every one.
+	// Their replacement is STRICTER, not weaker: each module's deleter is
+	// its own Apply, which refuses unrecognized paths (signature globs for
+	// leaks, git's worktree registry for worktrees) and re-proves
+	// deletability at delete time (TOCTOU guard). Checks 2 and 4 still
+	// apply.
+	selfGuarded := selfProving(action.Module)
 
 	// 1. resolves under one of the configured roots.
-	if !isLeaks && !underAnyRoot(abs, e.roots) {
+	if !selfGuarded && !underAnyRoot(abs, e.roots) {
 		return errors.New("safety: target not under any configured root")
 	}
 
@@ -157,7 +159,7 @@ func (e *Engine) safetyGuard(action Action) error {
 	}
 
 	// 3. core.Safety.CanDelete — NEVER bypass for root-scoped modules.
-	if !isLeaks && e.safety != nil {
+	if !selfGuarded && e.safety != nil {
 		if err := e.safety.CanDelete(abs); err != nil {
 			return fmt.Errorf("safety: %w", err)
 		}
