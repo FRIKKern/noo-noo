@@ -114,6 +114,11 @@ func DefaultSignatures() []Signature {
 				"/private/tmp/claude-*/*/*",
 				"/private/tmp/*-gocache*",
 				"/private/tmp/*gocache.*",
+				// The redirected-TMPDIR convention: machines that point dev
+				// churn at a big external disk use <volume>/dev-caches/tmp
+				// (TMPDIR/GOCACHE/npm redirects). Space is cheap there, but
+				// unbounded is unbounded — the same age+lsof gate applies.
+				"/Volumes/*/dev-caches/tmp/*",
 			},
 			// Scratch files are rarely held open even while a session is
 			// live, so lsof alone is insufficient: the age gate (newest
@@ -131,6 +136,8 @@ func DefaultSignatures() []Signature {
 			Globs: []string{
 				"/private/var/folders/*/*/T/grip-trial-*",
 				"/private/var/folders/*/*/T/emit-fence-*",
+				"/Volumes/*/dev-caches/tmp/grip-trial-*",
+				"/Volumes/*/dev-caches/tmp/emit-fence-*",
 			},
 			// Trial workdirs are disposable by contract (mktemp naming) but
 			// a run can legitimately span hours; twelve idle hours plus
