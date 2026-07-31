@@ -332,3 +332,22 @@ func TestPrimaryNeverRemovable(t *testing.T) {
 		t.Fatalf("primary checkout not refused: %v", err)
 	}
 }
+
+// TestDiscoverNestedRepos pins the meta-repo layout: a folder that is
+// itself a git repo with project clones inside must yield BOTH — stopping
+// at the outer .git once hid 315 worktrees living one level deeper.
+func TestDiscoverNestedRepos(t *testing.T) {
+	root := t.TempDir()
+	mk := func(parts ...string) {
+		if err := os.MkdirAll(filepath.Join(parts...), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(root, "meta", ".git")
+	mk(root, "meta", "inner-a", ".git")
+	mk(root, "meta", "sub", "inner-b", ".git")
+	got := DiscoverRepos([]string{root}, 3)
+	if len(got) != 3 {
+		t.Fatalf("discovered %d repos (%v), want 3", len(got), got)
+	}
+}

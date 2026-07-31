@@ -276,7 +276,10 @@ func walk(dir string, depth, maxDepth int, seen map[string]bool, out *[]string) 
 	fi, err := os.Stat(filepath.Join(dir, ".git"))
 	if err == nil && fi.IsDir() {
 		*out = append(*out, dir)
-		return // a repo's SUBDIRS are its own business (worktree list covers them)
+		// Do NOT stop here: repos containing repos is a real layout (a
+		// meta-repo over a folder of project clones) — stopping at the
+		// outer .git made discovery find ONE repo where hundreds of
+		// worktrees lived one level deeper.
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

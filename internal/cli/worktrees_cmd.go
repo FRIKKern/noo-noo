@@ -44,6 +44,7 @@ func worktreesCmd(ctx context.Context, app *App, args []string) int {
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	yes := fs.Bool("y", false, "skip confirmation")
 	dryRun := fs.Bool("dry-run", false, "show what would happen")
+	limit := fs.Int("limit", 0, "judge at most N dossiers this run (0 = all)")
 	verb, code, ok := parseVerb(app, fs, args, "Usage: noo-noo worktrees [list|scan|clean|judge]")
 	if !ok {
 		return code
@@ -74,7 +75,7 @@ func worktreesCmd(ctx context.Context, app *App, args []string) int {
 	case "clean":
 		return worktreesClean(ctx, app, m, rep, *asJSON, *yes, *dryRun)
 	case "judge":
-		return worktreesJudge(ctx, app, m, rep, *yes, *dryRun)
+		return worktreesJudge(ctx, app, m, rep, *yes, *dryRun, *limit)
 	default: // unreachable
 		return 2
 	}
@@ -128,12 +129,16 @@ func worktreesClean(ctx context.Context, app *App, m *worktrees.Module, rep modu
 // worktreesJudge runs the configured AI judge over every judgment-tier row,
 // prints each ruling, and — after one summary confirmation — applies the
 // remove verdicts through the grave-then-force path.
-func worktreesJudge(ctx context.Context, app *App, m *worktrees.Module, rep modules.Report, yes, dryRun bool) int {
+func worktreesJudge(ctx context.Context, app *App, m *worktrees.Module, rep modules.Report, yes, dryRun bool, limit int) int {
 	var dossiers []worktrees.Dossier
 	for _, it := range rep.Items {
 		if it.Evidence["tier"] == "judgment" {
 			dossiers = append(dossiers, worktrees.DossierFromItem(it))
 		}
+	}
+	if limit > 0 && len(dossiers) > limit {
+		_, _ = fmt.Fprintf(app.Out, "judging %d of %d dossier(s) (--limit)\n", limit, len(dossiers))
+		dossiers = dossiers[:limit]
 	}
 	if len(dossiers) == 0 {
 		_, _ = fmt.Fprintln(app.Out, "Nothing needs judgment.")
