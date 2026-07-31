@@ -130,13 +130,19 @@ func DefaultSignatures() []Signature {
 			Title: "Abandoned agent trial workdirs under $TMPDIR (T/)",
 			Globs: []string{
 				"/private/var/folders/*/*/T/grip-trial-*",
+				"/private/var/folders/*/*/T/emit-fence-*",
 			},
 			// Trial workdirs are disposable by contract (mktemp naming) but
-			// a run can legitimately span hours; two idle days plus nothing
-			// held open proves the experiment is over. 30 of these held
-			// 16 GB when the class was first identified.
+			// a run can legitimately span hours; twelve idle hours plus
+			// nothing held open proves the run is over. The age gate reads
+			// the NEWEST mtime in the tree, so a long-running trial stays
+			// protected while it writes. Sizing the gate: 30 grip-trial
+			// dirs held 16 GB over days, but one evening minted 3,746
+			// emit-fence dirs (37 GB) — at that burst rate a 48h gate lets
+			// two bursts stack, so half a day is the ceiling this class
+			// can afford.
 			Staleness: StaleWhenAgedAndLsofEmpty,
-			MinAge:    48 * time.Hour,
+			MinAge:    12 * time.Hour,
 			Risk:      modules.RiskLow,
 			Workaround: "Trial harnesses should remove their workdir on exit (trap cleanup), " +
 				"or create it under a session scratchpad that already has an owner.",

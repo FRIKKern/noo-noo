@@ -198,17 +198,25 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer srv.Stop()
 
-	// Single channel both triggers feed into. Buffered so a pressure event
-	// arriving while a daily tick is in flight is not dropped on the floor;
+	// Pressure triggers feed this channel. Buffered so a pressure event
+	// arriving while a tick is in flight is not dropped on the floor;
 	// extras beyond capacity are intentionally dropped (the consumer will
 	// pick up the next sample anyway).
 	trig := make(chan TickTrigger, 4)
+
+	// The daily tick gets its OWN reserved lane. On a machine that lives at
+	// the pressure threshold, pressure ticks kept trig full around the
+	// clock and the 03:00 daily — the only tick that auto-cleans — was
+	// dropped and rescheduled a full day out (observed live: "dropping
+	// daily tick" while the disk was refilling). Capacity 1: a second
+	// daily arriving before the first is consumed is genuinely redundant.
+	daily := make(chan TickTrigger, 1)
 
 	// Daily cron at d.cfg.Daemon.ScanHour.
 	schedDone := make(chan struct{})
 	go func() {
 		defer close(schedDone)
-		d.runScheduler(ctx, trig)
+		d.runScheduler(ctx, daily)
 	}()
 
 	// Pressure watcher (only spins up if both samplers can be constructed
@@ -225,14 +233,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
+		run := func(t TickTrigger) {
+			if err := runTickFn(d, ctx, t); err != nil {
+				log.Printf("tick: %v", err)
+			}
+		}
 		for {
+			// Daily first, non-blocking: with pressure firing every few
+			// minutes, a fair select would make the daily wait a coin-flip
+			// per cycle; the reserved lane plus this priority check makes
+			// it deterministic.
+			select {
+			case t := <-daily:
+				run(t)
+				continue
+			default:
+			}
 			select {
 			case <-ctx.Done():
 				return
+			case t := <-daily:
+				run(t)
 			case t := <-trig:
-				if err := runTickFn(d, ctx, t); err != nil {
-					log.Printf("tick: %v", err)
-				}
+				run(t)
 			}
 		}
 	}()
@@ -260,10 +283,10 @@ func (d *Daemon) runScheduler(ctx context.Context, trig chan<- TickTrigger) {
 			select {
 			case trig <- TriggerDaily:
 			default:
-				// Backpressure: the consumer is busy; drop the daily tick
-				// rather than blocking the scheduler. The next 24h cycle
-				// will re-fire.
-				log.Printf("scheduler: trigger channel full; dropping daily tick")
+				// The reserved daily lane (cap 1) is only ever full when a
+				// previous daily is still waiting to be consumed — running
+				// two back-to-back would be redundant, not a loss.
+				log.Printf("scheduler: previous daily tick still queued; not stacking another")
 			}
 		}
 	}

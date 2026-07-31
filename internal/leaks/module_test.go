@@ -401,17 +401,22 @@ func TestScratchAndTrialSignatureShape(t *testing.T) {
 	if !ok {
 		t.Fatal("darwin-t-agent-trial signature missing")
 	}
-	if trial.Staleness != StaleWhenAgedAndLsofEmpty || trial.MinAge != 48*time.Hour {
-		t.Errorf("trial signature gates = %v/%s, want aged+lsof-empty/48h", trial.Staleness, trial.MinAge)
+	if trial.Staleness != StaleWhenAgedAndLsofEmpty || trial.MinAge != 12*time.Hour {
+		t.Errorf("trial signature gates = %v/%s, want aged+lsof-empty/12h", trial.Staleness, trial.MinAge)
 	}
-	var trialMatch bool
-	for _, g := range trial.Globs {
-		if ok, _ := filepath.Match(g, "/private/var/folders/hb/18wmml0n5495w28s_1z_8flh0000gn/T/grip-trial-zPrCwr"); ok {
-			trialMatch = true
+	for _, p := range []string{
+		"/private/var/folders/hb/18wmml0n5495w28s_1z_8flh0000gn/T/grip-trial-zPrCwr",
+		"/private/var/folders/hb/18wmml0n5495w28s_1z_8flh0000gn/T/emit-fence-00efid",
+	} {
+		var trialMatch bool
+		for _, g := range trial.Globs {
+			if ok, _ := filepath.Match(g, p); ok {
+				trialMatch = true
+			}
 		}
-	}
-	if !trialMatch {
-		t.Errorf("trial globs %v must match a real grip-trial dir", trial.Globs)
+		if !trialMatch {
+			t.Errorf("trial globs %v must match %s", trial.Globs, p)
+		}
 	}
 }
 
