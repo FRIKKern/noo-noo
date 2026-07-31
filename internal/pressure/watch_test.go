@@ -63,3 +63,27 @@ func TestWatchDoesNotTriggerOnTransientSpike(t *testing.T) {
 		t.Fatal("single spike should not trigger")
 	}
 }
+
+// TestWatchIgnoresMemoryOnlyPressure pins the disk-only trigger law: a
+// machine that chronically runs above the memory threshold but has plenty
+// of disk must NEVER fire — measured live, the mem-OR-disk version produced
+// 113 pressure scans in one day on exactly such a machine.
+func TestWatchIgnoresMemoryOnlyPressure(t *testing.T) {
+	memHot := Reading{MemRatio: 0.97, FreeDiskGB: 100}
+	script := []Reading{memHot, memHot, memHot, memHot, memHot, memHot, memHot, memHot, memHot, memHot}
+	s := &scriptSampler{vals: script}
+	var fired atomic.Int32
+	th := Threshold{
+		MemHighRatio:   0.85,
+		DiskLowGB:      10,
+		SampleInterval: 5 * time.Millisecond,
+		DebounceWindow: 30 * time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	go WatchWithSampler(ctx, s, th, func() { fired.Add(1) })
+	time.Sleep(80 * time.Millisecond)
+	if fired.Load() != 0 {
+		t.Fatal("memory-only pressure fired a disk scan")
+	}
+}

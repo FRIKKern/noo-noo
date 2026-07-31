@@ -14,8 +14,11 @@ type Threshold struct {
 }
 
 // triggerCooldown is the minimum time between consecutive onTrigger calls.
-// Prevents tight-loop firing while pressure stays above threshold.
-const triggerCooldown = 5 * time.Minute
+// One hour: a fired scan takes minutes itself and pressure ticks never
+// auto-clean, so re-scanning every few minutes buys nothing — measured on
+// the founding machine, the 5-minute cooldown produced 113 pressure ticks
+// in one day (a near-100%% scan duty cycle at ~65%% daemon CPU).
+const triggerCooldown = 60 * time.Minute
 
 // Sampler is the abstraction that vmstat + statfs implement.
 type Sampler interface {
@@ -76,7 +79,12 @@ func WatchWithSampler(ctx context.Context, s Sampler, th Threshold, onTrigger fu
 			if err != nil {
 				continue
 			}
-			high := r.MemRatio >= th.MemHighRatio || r.FreeDiskGB <= float64(th.DiskLowGB)
+			// DISK ONLY. Memory pressure predicts nothing about
+			// disk-cleanup value, and on a machine that chronically runs
+			// hot it turned this watcher into a perpetual-motion scan
+			// machine (1,678 fires in six days). MemHighRatio remains a
+			// posture metric for `noo-noo status`; it no longer triggers.
+			high := r.FreeDiskGB <= float64(th.DiskLowGB)
 			if len(buf) >= bufLen {
 				buf = buf[1:]
 			}

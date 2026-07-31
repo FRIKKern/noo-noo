@@ -89,13 +89,23 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	defer d.tickMu.Unlock()
 	log.Printf("tick start: trigger=%s", trigger)
 
+	// Pressure ticks are the LIGHT path: leaks only. A pressure tick exists
+	// to catch a disk crisis, and the leak signatures are the only fast,
+	// crisis-relevant heuristic; the full-cost passes (repo+cache walks,
+	// worktree classification) belong to the daily tick. Measured before
+	// this split: every pressure tick paid the full 5-8 minute scan, and
+	// there were 113 of them in one day.
+	light := trigger == TriggerPressure
+
 	// Step 1: walk the filesystem -> populate fresh data.
-	if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots, Caches: d.cfg.Scan.CacheRoots}, d.store); err != nil {
-		log.Printf("tick: scan: %v", err)
+	if !light {
+		if err := scan.ScanRoots(ctx, scan.Roots{Repos: d.cfg.Scan.Roots, Caches: d.cfg.Scan.CacheRoots}, d.store); err != nil {
+			log.Printf("tick: scan: %v", err)
+		}
 	}
 
 	// Step 2: run heuristics over the fresh data.
-	suggestions := d.collectSuggestions(ctx)
+	suggestions := d.collectSuggestions(ctx, light)
 
 	// Persist (deduped) before deciding what to auto-clean — autoclean
 	// dismisses by id, so we need real ids on the in-memory rows. The
@@ -227,18 +237,20 @@ func splitLeaks(in []heuristics.Suggestion) (leakSugs, others []heuristics.Sugge
 // Mirrors what main.go's runScan used to do; pulled into tick.go so the
 // autoclean branch can see the same in-memory list (ids populated by
 // persistNew).
-func (d *Daemon) collectSuggestions(ctx context.Context) []heuristics.Suggestion {
+func (d *Daemon) collectSuggestions(ctx context.Context, light bool) []heuristics.Suggestion {
 	var all []heuristics.Suggestion
-	if d.cfg.Heuristics.IdleRepos.Enabled {
+	if !light && d.cfg.Heuristics.IdleRepos.Enabled {
 		all = append(all, heuristics.IdleRepos(ctx, d.store, d.cfg)...)
 	}
-	if d.cfg.Heuristics.CacheVelocity.Enabled {
+	if !light && d.cfg.Heuristics.CacheVelocity.Enabled {
 		all = append(all, heuristics.CacheVelocity(ctx, d.store, d.cfg)...)
 	}
 	if d.cfg.Heuristics.Leaks.Enabled {
 		all = append(all, heuristics.Leaks(ctx, leakSourceFn(d), d.cfg)...)
 	}
-	all = append(all, heuristics.Worktrees(ctx, worktreeSourceFn(d), d.cfg.Worktrees.Enabled)...)
+	if !light {
+		all = append(all, heuristics.Worktrees(ctx, worktreeSourceFn(d), d.cfg.Worktrees.Enabled)...)
+	}
 	return all
 }
 

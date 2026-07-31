@@ -25,6 +25,10 @@ const plistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
   <{{.KeepAlive}}/>
   <key>ProcessType</key>
   <string>Background</string>
+  <key>LowPriorityBackgroundIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>15</integer>
   <key>StandardOutPath</key>
   <string>/tmp/noo-nood.out.log</string>
   <key>StandardErrorPath</key>
