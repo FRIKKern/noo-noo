@@ -32,7 +32,6 @@ type combinedSampler struct {
 
 func (c *combinedSampler) Sample() (Reading, error) {
 	var out Reading
-	out.FreeDiskGB = 1 << 30 // very high so min() works
 	for _, s := range c.samplers {
 		r, err := s.Sample()
 		if err != nil {
@@ -41,8 +40,11 @@ func (c *combinedSampler) Sample() (Reading, error) {
 		if r.MemRatio > out.MemRatio {
 			out.MemRatio = r.MemRatio
 		}
-		if r.FreeDiskGB < out.FreeDiskGB {
+		// Only real measurements participate in the min — an unmeasured
+		// zero once poisoned the merge into a permanent "0 GB free".
+		if r.DiskMeasured && (!out.DiskMeasured || r.FreeDiskGB < out.FreeDiskGB) {
 			out.FreeDiskGB = r.FreeDiskGB
+			out.DiskMeasured = true
 		}
 	}
 	return out, nil
@@ -79,12 +81,13 @@ func WatchWithSampler(ctx context.Context, s Sampler, th Threshold, onTrigger fu
 			if err != nil {
 				continue
 			}
-			// DISK ONLY. Memory pressure predicts nothing about
-			// disk-cleanup value, and on a machine that chronically runs
-			// hot it turned this watcher into a perpetual-motion scan
-			// machine (1,678 fires in six days). MemHighRatio remains a
-			// posture metric for `noo-noo status`; it no longer triggers.
-			high := r.FreeDiskGB <= float64(th.DiskLowGB)
+			// DISK ONLY, and only a MEASURED disk. Memory pressure
+			// predicts nothing about disk-cleanup value, and on a machine
+			// that chronically runs hot it turned this watcher into a
+			// perpetual-motion scan machine (1,678 fires in six days).
+			// MemHighRatio remains a posture metric for `noo-noo status`;
+			// it no longer triggers.
+			high := r.DiskMeasured && r.FreeDiskGB <= float64(th.DiskLowGB)
 			if len(buf) >= bufLen {
 				buf = buf[1:]
 			}

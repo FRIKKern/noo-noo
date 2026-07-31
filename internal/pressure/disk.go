@@ -17,5 +17,5 @@ func (d *DiskSampler) Sample() (Reading, error) {
 	}
 	// Bavail is blocks available to non-root; Bsize is bytes per block.
 	free := float64(stat.Bavail) * float64(stat.Bsize) / 1e9
-	return Reading{FreeDiskGB: free}, nil
+	return Reading{FreeDiskGB: free, DiskMeasured: true}, nil
 }
