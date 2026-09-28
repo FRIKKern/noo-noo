@@ -7,7 +7,7 @@ cask "noo-noo" do
   desc "Smart cleanup for Mac developers (menubar app + CLI)"
   homepage "https://github.com/FRIKKern/noo-noo"
 
-  depends_on macos: ":big_sur"
+  depends_on macos: ">= :big_sur"
 
   app "Noo-Noo.app"
   binary "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-noo", target: "noo-noo"
