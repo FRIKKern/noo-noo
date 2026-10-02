@@ -24,13 +24,15 @@ cask "noo-noo" do
                    sudo: false
   end
 
-  uninstall launchctl: "io.noo-noo.d",
-            delete:    [
-              "~/Library/LaunchAgents/io.noo-noo.d.plist",
-              "~/Library/Application Support/noo-noo",
-            ]
+  # Upgrades must not need sudo and must not wipe the store (trends history,
+  # audit trail). `delete:` always runs through sudo in Homebrew, so the
+  # LaunchAgent is handled by the launchctl stanza alone and user data moves
+  # to zap, as trash.
+  uninstall launchctl: "io.noo-noo.d"
 
   zap trash: [
+    "~/Library/LaunchAgents/io.noo-noo.d.plist",
+    "~/Library/Application Support/noo-noo",
     "~/.config/noo-noo",
     "~/Library/Logs/noo-noo",
     "~/Library/Caches/noo-noo",
