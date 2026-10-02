@@ -194,6 +194,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	srv := ipc.NewServer(d.cfg.Daemon.SocketPath, handlers)
 	if err := srv.Start(ctx); err != nil {
+		if errors.Is(err, ipc.ErrAlreadyRunning) {
+			// Another noo-nood owns the socket. Return it bare so main's
+			// message is the user-facing one; nothing on disk was touched.
+			return err
+		}
 		return fmt.Errorf("ipc start: %w", err)
 	}
 	defer srv.Stop()
@@ -442,6 +447,12 @@ func main() {
 	log.Printf("noo-nood %s starting; socket=%s store=%s",
 		version, cfg.Daemon.SocketPath, cfg.Daemon.StorePath)
 	if err := newDaemon(cfg, st).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if errors.Is(err, ipc.ErrAlreadyRunning) {
+			// Second instance (e.g. a bare `noo-nood` beside the launchd
+			// one): refuse loudly, exit without touching the live socket.
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		log.Fatalf("daemon: %v", err)
 	}
 	log.Printf("noo-nood: shutdown clean")
