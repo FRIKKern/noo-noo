@@ -38,7 +38,60 @@ func fixtureStatus() statusData {
 	d.Offload = offloadPosture{Configured: true, DestRoot: "/Volumes/SATECHI/noo-noo-offload",
 		Usable: true, Detail: "verified writable just now (UUID-pinned, live write-probe)"}
 	d.Pressure = pressurePosture{Batches24h: 180, NearContinuous: true}
+	// The founding Jetsam day: 8 GB machine, swap essentially full, a 3 GB
+	// compressor, one process holding most of it.
+	d.Memory = core.MemorySnapshot{
+		PhysicalBytes: 8 << 30, SwapUsedBytes: 11901 << 20, SwapTotalBytes: 12288 << 20,
+		CompressorBytes: 3068 << 20, CompressedBytes: 28 << 30,
+		TopCompressed: []core.MemoryProcess{
+			{PID: 1365, Command: "cmux", ResidentBytes: 9434 << 20, CompressedBytes: 9032 << 20},
+			{PID: 84923, Command: "node", ResidentBytes: 1795 << 20, CompressedBytes: 1763 << 20},
+			{PID: 409, Command: "WindowServer", ResidentBytes: 1757 << 20, CompressedBytes: 1375 << 20},
+		},
+	}
+	d.MemoryOK = true
 	return d
+}
+
+// TestStatusRendersMemoryVerdict: the memory section states the numbers,
+// an honest verdict, and WHICH processes to quit — and degrades to a note
+// rather than vanishing when the read failed.
+func TestStatusRendersMemoryVerdict(t *testing.T) {
+	withStatusFixture(t, fixtureStatus())
+	out, _, code := runStatus(t)
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{
+		"Memory",
+		"8.0 GB physical; swap 11.6 GB used of 12.0 GB (97%); compressor holds 3.0 GB (37% of RAM)",
+		"verdict: THRASHING",
+		"paging, not computing",
+		"top compressed: cmux (pid 1365) 8.8 GB, node (pid 84923) 1.7 GB, WindowServer (pid 409) 1.3 GB",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q\n---\n%s", want, out)
+		}
+	}
+
+	quiet := fixtureStatus()
+	quiet.Memory = core.MemorySnapshot{PhysicalBytes: 16 << 30, SwapUsedBytes: 0, SwapTotalBytes: 0, CompressorBytes: 512 << 20,
+		Notes: []string{"top unavailable: exit status 1"}}
+	withStatusFixture(t, quiet)
+	out, _, _ = runStatus(t)
+	for _, want := range []string{"no swap in use", "verdict: fine", "note: top unavailable"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("quiet memory output missing %q\n---\n%s", want, out)
+		}
+	}
+
+	broken := fixtureStatus()
+	broken.MemoryOK, broken.MemoryNote = false, "sysctl hw.memsize vm.swapusage: exec: not found"
+	withStatusFixture(t, broken)
+	out, _, code = runStatus(t)
+	if code != 0 || !strings.Contains(out, "unavailable: sysctl hw.memsize") {
+		t.Errorf("memory read failure must degrade to a note (code=%d):\n%s", code, out)
+	}
 }
 
 // withStatusFixture swaps the gather hook for the test's fixture.
@@ -150,6 +203,9 @@ func TestStatusJSON(t *testing.T) {
 	}
 	if !j.Pressure.NearContinuous {
 		t.Errorf("pressure JSON wrong: %+v", j.Pressure)
+	}
+	if j.Memory == nil || j.Memory.Verdict != "thrashing" || len(j.Memory.TopCompressed) != 3 || j.Memory.TopCompressed[0].Command != "cmux" {
+		t.Errorf("memory JSON wrong: %+v", j.Memory)
 	}
 	if !strings.Contains(j.Verdict, "usable external headroom") {
 		t.Errorf("verdict JSON wrong: %q", j.Verdict)

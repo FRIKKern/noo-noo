@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/FRIKKern/noo-noo/internal/config"
@@ -71,7 +72,10 @@ type statusData struct {
 	Offload       offloadPosture
 	VM            vmdisk.Report // guest datadisk posture; empty = silent section
 	Pressure      pressurePosture
-	StoreNote     string // non-empty when history could not be read (missing store etc.)
+	Memory        core.MemorySnapshot // live RAM/swap/compressor posture
+	MemoryOK      bool                // false when even physical RAM could not be read
+	MemoryNote    string              // why, when !MemoryOK
+	StoreNote     string              // non-empty when history could not be read (missing store etc.)
 }
 
 // statusGatherFn is the gather hook; tests override it to inject fixtures
@@ -147,6 +151,15 @@ func gatherStatus(ctx context.Context, storeOverride string, days int, now time.
 		cfg = config.Defaults()
 	}
 	data.Offload = checkOffloadPosture(ctx, cfg)
+
+	// Memory posture: the founding Jetsam day was a memory problem the disk
+	// lines could not see. Three tolerated shell-outs; only a failed
+	// physical-RAM read blanks the section.
+	if m, err := core.ReadMemory(ctx); err == nil {
+		data.Memory, data.MemoryOK = m, true
+	} else {
+		data.MemoryNote = err.Error()
+	}
 
 	// VM inner disks (charter D21): a guest datadisk can hit 100% and kill
 	// dockerd while the HOST still reports plenty of free space, so posture
@@ -363,6 +376,9 @@ func renderStatus(out io.Writer, d statusData) {
 		}
 	}
 
+	_, _ = fmt.Fprintln(out, "\nMemory")
+	renderMemory(out, d)
+
 	_, _ = fmt.Fprintln(out, "\nExternal volumes")
 	if len(d.Externals) == 0 {
 		_, _ = fmt.Fprintln(out, "  none mounted")
@@ -390,6 +406,35 @@ func renderStatus(out io.Writer, d statusData) {
 	}
 
 	_, _ = fmt.Fprintf(out, "\nVerdict: %s\n", verdictSentence(i.TotalBytes, d.Externals, d.Offload))
+}
+
+// renderMemory prints the memory section: the numbers, the verdict with the
+// figures that earned it, and the top processes by compressed memory (the
+// ones to quit when the verdict says so). Tolerated read failures become
+// notes, never a missing section.
+func renderMemory(out io.Writer, d statusData) {
+	if !d.MemoryOK {
+		_, _ = fmt.Fprintf(out, "  unavailable: %s\n", d.MemoryNote)
+		return
+	}
+	m := d.Memory
+	swap := "no swap in use"
+	if m.SwapTotalBytes > 0 {
+		swap = fmt.Sprintf("swap %s used of %s (%.0f%%)", core.Bytes(m.SwapUsedBytes), core.Bytes(m.SwapTotalBytes), 100*m.SwapFill())
+	}
+	_, _ = fmt.Fprintf(out, "  %s physical; %s; compressor holds %s (%.0f%% of RAM)\n",
+		core.Bytes(m.PhysicalBytes), swap, core.Bytes(m.CompressorBytes), 100*m.CompressorShare())
+	_, _ = fmt.Fprintf(out, "  verdict: %s\n", m.VerdictLine())
+	if len(m.TopCompressed) > 0 {
+		parts := make([]string, 0, len(m.TopCompressed))
+		for _, p := range m.TopCompressed {
+			parts = append(parts, fmt.Sprintf("%s (pid %d) %s", p.Command, p.PID, core.Bytes(p.CompressedBytes)))
+		}
+		_, _ = fmt.Fprintf(out, "  top compressed: %s\n", strings.Join(parts, ", "))
+	}
+	for _, n := range m.Notes {
+		_, _ = fmt.Fprintf(out, "  note: %s\n", n)
+	}
 }
 
 func offloadLine(o offloadPosture) string {
@@ -425,8 +470,29 @@ type statusJSON struct {
 		Batches24h     int  `json:"scan_batches_24h"`
 		NearContinuous bool `json:"near_continuous"`
 	} `json:"pressure"`
-	Note    string `json:"note,omitempty"`
-	Verdict string `json:"verdict"`
+	Memory  *statusMemoryJSON `json:"memory,omitempty"`
+	Note    string            `json:"note,omitempty"`
+	Verdict string            `json:"verdict"`
+}
+
+// statusMemoryJSON mirrors core.MemorySnapshot plus its verdict.
+type statusMemoryJSON struct {
+	PhysicalBytes   int64               `json:"physical_bytes"`
+	SwapUsedBytes   int64               `json:"swap_used_bytes"`
+	SwapTotalBytes  int64               `json:"swap_total_bytes"`
+	CompressorBytes int64               `json:"compressor_bytes"`
+	CompressorShare float64             `json:"compressor_share"`
+	Verdict         string              `json:"verdict"`
+	VerdictLine     string              `json:"verdict_line"`
+	TopCompressed   []statusMemProcJSON `json:"top_compressed,omitempty"`
+	Notes           []string            `json:"notes,omitempty"`
+}
+
+type statusMemProcJSON struct {
+	PID             int    `json:"pid"`
+	Command         string `json:"command"`
+	ResidentBytes   int64  `json:"resident_bytes"`
+	CompressedBytes int64  `json:"compressed_bytes"`
 }
 
 // statusVMJSON is one guest datadisk row, with its advice (when the fill
@@ -496,7 +562,21 @@ func renderStatusJSON(out io.Writer, d statusData) error {
 	}
 	j.Pressure.Batches24h = d.Pressure.Batches24h
 	j.Pressure.NearContinuous = d.Pressure.NearContinuous
-	j.Note = d.StoreNote
+	if d.MemoryOK {
+		m := d.Memory
+		mj := &statusMemoryJSON{
+			PhysicalBytes: m.PhysicalBytes, SwapUsedBytes: m.SwapUsedBytes, SwapTotalBytes: m.SwapTotalBytes,
+			CompressorBytes: m.CompressorBytes, CompressorShare: m.CompressorShare(),
+			Verdict: string(m.Verdict()), VerdictLine: m.VerdictLine(), Notes: m.Notes,
+		}
+		for _, p := range m.TopCompressed {
+			mj.TopCompressed = append(mj.TopCompressed, statusMemProcJSON{
+				PID: p.PID, Command: p.Command, ResidentBytes: p.ResidentBytes, CompressedBytes: p.CompressedBytes,
+			})
+		}
+		j.Memory = mj
+	}
+	j.Note = appendNote(d.StoreNote, d.MemoryNote)
 	j.Verdict = verdictSentence(d.Internal.TotalBytes, d.Externals, d.Offload)
 	enc := json.NewEncoder(out)
 	return enc.Encode(j)
