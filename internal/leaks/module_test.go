@@ -357,11 +357,25 @@ func TestDefaultSignaturesShape(t *testing.T) {
 	if !ok {
 		t.Fatal("private-tmp-agent-scratch signature missing")
 	}
-	if scratch.Staleness != StaleWhenAgedAndLsofEmpty {
-		t.Error("scratch staleness must be aged+lsof-empty (age gate protects live sessions)")
+	if scratch.Staleness != StaleWhenSessionDead || scratch.Session == nil {
+		t.Fatal("scratch staleness must be session-liveness (uuid-checked), with a Session rule")
+	}
+	if scratch.Session.DeadAfter != time.Hour || scratch.Session.EntryIdle != 24*time.Hour ||
+		scratch.Session.TranscriptWindow != 30*time.Minute || scratch.Session.ScratchDir != "scratchpad" {
+		t.Errorf("scratch session rule = %+v, want dead 1h / entry idle 24h / transcript 30m / scratchpad", *scratch.Session)
 	}
 	if scratch.MinAge != 7*24*time.Hour {
-		t.Errorf("scratch MinAge = %s, want 168h", scratch.MinAge)
+		t.Errorf("scratch MinAge (non-uuid fallback) = %s, want 168h", scratch.MinAge)
+	}
+	entry := "/private/tmp/claude-501/-Users-x/0a1b2c3d-1111-2222-3333-444444444444/scratchpad/big-build"
+	var entryMatch bool
+	for _, g := range scratch.scratchGlobs() {
+		if ok, _ := filepath.Match(g, entry); ok {
+			entryMatch = true
+		}
+	}
+	if !entryMatch {
+		t.Errorf("scratch entry globs %v must match %s", scratch.scratchGlobs(), entry)
 	}
 	for _, p := range []string{
 		"/private/tmp/claude-501/-Volumes-repo/0a1b2c3d-session", // per-session depth

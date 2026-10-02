@@ -9,7 +9,6 @@ import (
 
 	"github.com/FRIKKern/noo-noo/internal/core"
 	"github.com/FRIKKern/noo-noo/internal/modules"
-	"github.com/FRIKKern/noo-noo/internal/modules/caches"
 	"github.com/FRIKKern/noo-noo/internal/modules/dev"
 	"github.com/FRIKKern/noo-noo/internal/modules/startup"
 )
@@ -28,9 +27,9 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 	all := []modules.Module{
 		dev.New([]string{filepath.Join(homeDir(), "Documents", "GitHub")},
 			core.NewSafety([]string{filepath.Join(homeDir(), "Documents", "GitHub")}, []string{".git"})),
-		caches.New(defaultCacheTargets(),
-			core.NewSafety([]string{filepath.Join(homeDir(), "Library", "Caches")}, nil)),
+		newCachesModule(),
 		newLeaksModule(),
+		newAppsModule(),
 		startup.New(defaultStartupConfig(), startup.ExecRunner{},
 			filepath.Join(auditDir(), "startup-restore.jsonl"), os.Getuid()),
 		offloadMod,

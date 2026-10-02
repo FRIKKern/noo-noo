@@ -57,6 +57,8 @@ Commands:
   dev     [list|clean]     Manage build artifacts under scan roots
   leaks   [list|scan|clean]
                            Find known leak classes (truth-sized, lsof-gated)
+  apps    [list|clean]     Find data left behind by uninstalled apps
+                           (no owning app, idle 30d, truth-sized)
   orphans [list|scan|kill] Find orphaned automation browsers (headless,
                            parent job gone) and terminate them safely
   offload [scan|plan|apply|pending|run-pending|cancel]
