@@ -72,6 +72,11 @@ func daemonEntry(_ context.Context, app *App, args []string) int {
 	return 0
 }
 
+// daemonUnreachableHint is appended to a failed dial: the one command that
+// brings a launchd-managed daemon back whatever state it is in (alive but
+// socketless included).
+const daemonUnreachableHint = "if launchd manages it: launchctl kickstart -k gui/$(id -u)/io.noo-noo.d"
+
 func (d *daemonCmd) Run(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: noo-noo daemon [start|stop|status|force-scan]")
@@ -94,15 +99,15 @@ func (d *daemonCmd) Run(args []string) error {
 	case "status":
 		c, err := d.opts.Dial()
 		if err != nil {
-			return fmt.Errorf("daemon not reachable: %w", err)
+			return fmt.Errorf("daemon not reachable: %w\n%s", err, daemonUnreachableHint)
 		}
 		defer func() { _ = c.Close() }()
 		s, err := c.DaemonStatus()
 		if err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(d.opts.Out, "noo-nood: running=%t version=%s uptime=%s\n",
-			s.Running, s.Version, s.Uptime)
+		_, _ = fmt.Fprintf(d.opts.Out, "noo-nood: running=%t pid=%d version=%s uptime=%s\n",
+			s.Running, s.PID, s.Version, s.Uptime)
 		return nil
 	case "force-scan":
 		c, err := d.opts.Dial()

@@ -110,6 +110,10 @@ type Daemon struct {
 	// pressure tick deadlocked both on the store's single-writer lock and
 	// froze the daemon at zero CPU with no further tick logs.
 	tickMu sync.Mutex
+	// leakFirstSeen is the storm detector's fallback appearance time for
+	// leak paths without a filesystem birth time (see leakAppearedAt).
+	// Guarded by tickMu; lazily allocated.
+	leakFirstSeen map[string]time.Time
 }
 
 // manualKicker satisfies ipc.SchedulerKicker by running one manual tick
@@ -194,6 +198,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	srv := ipc.NewServer(d.cfg.Daemon.SocketPath, handlers)
 	if err := srv.Start(ctx); err != nil {
+		if errors.Is(err, ipc.ErrAlreadyRunning) {
+			// Another noo-nood owns the socket. Return it bare so main's
+			// message is the user-facing one; nothing on disk was touched.
+			return err
+		}
 		return fmt.Errorf("ipc start: %w", err)
 	}
 	defer srv.Stop()
@@ -442,6 +451,12 @@ func main() {
 	log.Printf("noo-nood %s starting; socket=%s store=%s",
 		version, cfg.Daemon.SocketPath, cfg.Daemon.StorePath)
 	if err := newDaemon(cfg, st).Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		if errors.Is(err, ipc.ErrAlreadyRunning) {
+			// Second instance (e.g. a bare `noo-nood` beside the launchd
+			// one): refuse loudly, exit without touching the live socket.
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		log.Fatalf("daemon: %v", err)
 	}
 	log.Printf("noo-nood: shutdown clean")

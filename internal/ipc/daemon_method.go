@@ -1,6 +1,9 @@
 package ipc
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 // Status returns daemon liveness information. The daemon main constructs
 // DaemonService with StartedAt = (func() time.Time)(daemon.StartTime) and
@@ -14,6 +17,7 @@ import "time"
 func (d *DaemonService) Status(_ StatusRequest, reply *StatusResponse) error {
 	reply.Running = true
 	reply.Version = d.Version
+	reply.PID = os.Getpid()
 	if d.StartedAt != nil {
 		reply.Uptime = time.Since(d.StartedAt())
 	}

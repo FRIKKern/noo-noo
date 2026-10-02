@@ -152,3 +152,20 @@ CREATE TABLE IF NOT EXISTS disk_space_history (
 );
 CREATE INDEX IF NOT EXISTS idx_disk_history_volume_time
     ON disk_space_history(volume_uuid, recorded_at);
+
+-- v4: leak-storm alert ledger.
+--
+-- One row per leak signature: when the daemon last sent a "leak storm"
+-- notification (>= N new instances of the signature within the storm window
+-- — a crash/relaunch loop, e.g. 28 Chrome code-sign clones in 20 minutes)
+-- and how many instances it counted. The tick reads it to rate-limit the
+-- alert to once per cooldown per signature across daemon restarts; the
+-- sightings themselves are re-derived from the filesystem (birth time), so
+-- no per-instance table is needed.
+--
+-- Appended as CREATE TABLE IF NOT EXISTS ONLY (charter D16).
+CREATE TABLE IF NOT EXISTS leak_storm_alerts (
+    signature  TEXT     PRIMARY KEY,
+    fired_at   DATETIME NOT NULL,
+    count      INTEGER  NOT NULL
+);

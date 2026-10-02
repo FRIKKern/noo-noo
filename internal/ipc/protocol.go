@@ -89,6 +89,9 @@ type StatusResponse struct {
 	Running bool
 	Version string
 	Uptime  time.Duration
+	// PID is the answering daemon's process id, so `daemon status` can name
+	// the instance that owns the socket (single-instance lock, charter).
+	PID int
 }
 
 // TriggerScanArgs is the request body for Daemon.TriggerScan. Empty for now;
