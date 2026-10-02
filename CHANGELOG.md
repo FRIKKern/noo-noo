@@ -42,6 +42,10 @@ all of it, tell the truth about sizes, and stay out of the way while doing so.
 - **Memory posture in `noo-noo status`** — physical RAM, swap used/total,
   compressor share, a fine/tight/thrashing verdict citing its numbers, and
   the top 3 processes by compressed memory (`internal/core/memory.go`).
+- **Memory section in `noo-noo report`** — first in the human report and
+  first NDJSON row (`{"module":"memory"}`): RAM, swap used/total, compressor
+  (logical held and RAM occupied), top 5 processes by resident+compressed
+  with pid/name/age. Each source degrades to an "unavailable" note.
 - **Caches**: `~/Library/Developer/CoreSimulator/Caches/dyld` target;
   `~/.Trash` sized and shown with "Empty Trash", never cleaned by noo-noo.
 - **Finished-worktree sweeper** (`noo-noo worktrees [list|scan|clean|judge]`)
@@ -51,6 +55,24 @@ all of it, tell the truth about sizes, and stay out of the way while doing so.
   hardlink-alias liveness, leaks auto-clean on the daily tick.
 
 ### Fixed
+- **Truth-sized headlines** — module totals and "Grand total reclaimable"
+  lead with measured reclaimable bytes. The leaks total is the *union* of
+  unique extents across all hits (`sizer.Union`, one walk per tree): sibling
+  hits are routinely clones of one another, and summing their rows was the
+  "41.5 GB claimed, 12.7 MB freed" fiction. On the founding machine `leaks
+  list` now reads `3.5 GB reclaimable (apparent 40.5 GB)`. NDJSON rows add
+  `reclaimable_bytes`, `apparent_bytes`, `reclaimable_measured`.
+- **Readable tables** — fixed-width right-aligned SIZE first, path with no
+  padding, an APPARENT column only when a row differs by more than 20 %,
+  paths middle-truncated to the terminal width (120 when not a TTY).
+- `status` no longer lists `/Volumes/Recovery` (or any volume on the boot
+  container / physical disk, or Preboot/VM/Update) as external headroom.
+- `install` routes daemon logs to `~/Library/Logs/noo-noo/noo-nood.log` and
+  `noo-nood.err.log` (was `/tmp`), matching the cask zap stanza.
+- `metrics.SampleSysctl` never worked: `vm.swapusage`/`vm.loadavg` return
+  binary structs, not text. Decoded raw now, text parser kept as fallback.
+- Usage text matches reality and lists worktrees/suggestions/auto-clean/
+  daemon/install.
 - **Daemon single instance** — a second `noo-nood` on the same socket exits
   with `noo-nood already running (pid N)` and touches nothing on disk. Start
   takes a `flock` on `<socket>.lock`, removes a pre-existing socket only when
