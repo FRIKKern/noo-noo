@@ -19,6 +19,7 @@ const launchAgentLabel = "io.noo-noo.d"
 
 type installOpts struct {
 	LaunchAgentDir string           // default: ~/Library/LaunchAgents
+	LogDir         string           // default: ~/Library/Logs/noo-noo (daemon stdout/stderr)
 	ProgramPath    string           // default: result of os.Executable, swapped to noo-nood
 	Runner         *launchd.Manager // launchctl wrapper from internal/launchd
 	Out            io.Writer
@@ -35,6 +36,7 @@ func installEntry(_ context.Context, app *App, args []string) int {
 	home, _ := os.UserHomeDir()
 	cmd := newInstallCmd(installOpts{
 		LaunchAgentDir: filepath.Join(home, "Library", "LaunchAgents"),
+		LogDir:         launchd.DefaultLogDir(),
 		ProgramPath:    defaultDaemonPath(),
 		Runner:         launchd.New(),
 		Out:            app.Out,
@@ -73,7 +75,16 @@ func (c *installCmd) Run(_ []string) error {
 	if err := os.MkdirAll(c.opts.LaunchAgentDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir LaunchAgents: %w", err)
 	}
-	plist, err := launchd.GeneratePlist(launchAgentLabel, c.opts.ProgramPath, nil, true, true)
+	logDir := c.opts.LogDir
+	if logDir == "" {
+		logDir = launchd.DefaultLogDir()
+	}
+	// launchd does not create the log directory for StandardOutPath; a
+	// missing one silently drops the daemon's output.
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir log dir: %w", err)
+	}
+	plist, err := launchd.GeneratePlist(launchAgentLabel, c.opts.ProgramPath, nil, true, true, logDir)
 	if err != nil {
 		return fmt.Errorf("generate plist: %w", err)
 	}
@@ -84,7 +95,7 @@ func (c *installCmd) Run(_ []string) error {
 	if err := c.opts.Runner.Install(plistPath); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w", err)
 	}
-	_, _ = fmt.Fprintf(c.opts.Out, "Installed %s. Daemon will start at login.\n", plistPath)
+	_, _ = fmt.Fprintf(c.opts.Out, "Installed %s. Daemon will start at login; logs in %s.\n", plistPath, logDir)
 	return nil
 }
 
