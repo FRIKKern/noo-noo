@@ -69,3 +69,32 @@ func TestApplyClearsContents(t *testing.T) {
 		t.Errorf("cache should be empty, got %d entries", len(entries))
 	}
 }
+
+func TestReportOnlyIsSizedNeverCleaned(t *testing.T) {
+	home := t.TempDir()
+	trash := filepath.Join(home, ".Trash")
+	if err := os.MkdirAll(trash, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(trash, "old"), make([]byte, 300), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	safety := core.NewSafety([]string{home}, nil)
+	m := New(nil, safety).WithReportOnly(ReportOnly{Path: trash, Suggestion: "Empty Trash"})
+	rep, err := m.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Items) != 1 || rep.Items[0].Evidence["report_only"] != "true" || rep.Items[0].Evidence["suggestion"] != "Empty Trash" || rep.Total != 300 {
+		t.Fatalf("report-only item missing or wrong: %+v total=%d", rep.Items, int64(rep.Total))
+	}
+	if actions := m.Plan(rep); len(actions) != 0 {
+		t.Errorf("report-only item planned: %+v", actions)
+	}
+	if _, err := m.Apply(context.Background(), modules.Action{Module: "caches", Op: "clear", Target: trash}); err == nil {
+		t.Error("Apply on a report-only item must refuse")
+	}
+	if entries, _ := os.ReadDir(trash); len(entries) != 1 {
+		t.Error("report-only dir was touched")
+	}
+}
