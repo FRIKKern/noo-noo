@@ -7,13 +7,18 @@ cask "noo-noo" do
   desc "Smart cleanup for Mac developers (menubar app + CLI)"
   homepage "https://github.com/FRIKKern/noo-noo"
 
-  depends_on macos: ">= :big_sur"
+  depends_on macos: :big_sur
 
   app "Noo-Noo.app"
   binary "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-noo", target: "noo-noo"
   binary "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-nood", target: "noo-nood"
 
   postflight do
+    # Ad-hoc signed: macOS Sequoia SIGKILLs a quarantined binary run from the
+    # postflight, so clear the quarantine flag before registering the daemon.
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Noo-Noo.app"],
+                   sudo: false
     system_command "#{appdir}/Noo-Noo.app/Contents/Resources/bin/noo-noo",
                    args: ["install"],
                    sudo: false
