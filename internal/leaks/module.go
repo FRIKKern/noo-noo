@@ -25,21 +25,30 @@ type Module struct {
 	// causal arbitrates hardlink-alias LIVE verdicts for signatures with
 	// AliasLaunchCausality; defaults to causalCheck, injectable in tests.
 	causal func(ctx context.Context, path string) (stale bool, proof string)
-	uid    int // only hits owned by this uid are considered
-	now    func() time.Time
+	// openPaths is the batched open-file listing family scans use;
+	// defaults to LsofOpenPaths, injectable in tests.
+	openPaths OpenPathsLister
+	// session is the agent-session liveness probe; defaults to
+	// SessionProbeFor(home, now), injectable in tests.
+	session SessionProber
+	uid     int // only hits owned by this uid are considered
+	now     func() time.Time
 }
 
 // New constructs a Module over a signature registry. safety supplies the
 // signature-scoped CanDeleteLeakTarget predicate (its generic allowlist is
 // deliberately NOT consulted for leak targets — charter D4).
 func New(sigs []Signature, safety *core.Safety) *Module {
+	home, _ := os.UserHomeDir()
 	return &Module{
-		sigs:   sigs,
-		safety: safety,
-		probe:  LsofProbe,
-		causal: causalCheck,
-		uid:    os.Getuid(),
-		now:    time.Now,
+		sigs:      sigs,
+		safety:    safety,
+		probe:     LsofProbe,
+		causal:    causalCheck,
+		openPaths: LsofOpenPaths,
+		session:   SessionProbeFor(home, time.Now),
+		uid:       os.Getuid(),
+		now:       time.Now,
 	}
 }
 
@@ -52,6 +61,13 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 	rep := modules.Report{Module: "leaks"}
 	seen := map[string]bool{}
 	for _, sig := range m.sigs {
+		if sig.Family != nil {
+			// Family signatures discover by sibling grouping, not by glob.
+			if err := m.scanFamilies(ctx, sig, seen, &rep); err != nil {
+				return rep, err
+			}
+			continue
+		}
 		for _, g := range sig.Globs {
 			matches, err := filepath.Glob(g)
 			if err != nil {
@@ -74,10 +90,46 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 				}
 				rep.Items = append(rep.Items, item)
 				rep.Total += item.Size
+				// A LIVE session still sheds idle scratch entries: offer
+				// them one by one (the human freed 22 GB inside a live
+				// session exactly this way).
+				if item.Evidence["session_alive"] == "true" {
+					for _, entry := range m.scratchEntries(sig, p) {
+						if seen[entry] {
+							continue
+						}
+						seen[entry] = true
+						if it, ok := m.inspect(ctx, sig, entry); ok {
+							rep.Items = append(rep.Items, it)
+							rep.Total += it.Size
+						}
+					}
+				}
 			}
 		}
 	}
 	return rep, nil
+}
+
+// scratchEntries lists the direct children of a live session's scratch
+// dir — the per-entry candidates. Symlinks are never candidates.
+func (m *Module) scratchEntries(sig Signature, sessionDir string) []string {
+	if sig.Session == nil || sig.Session.ScratchDir == "" {
+		return nil
+	}
+	dir := filepath.Join(sessionDir, sig.Session.ScratchDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		out = append(out, filepath.Join(dir, e.Name()))
+	}
+	return out
 }
 
 // Plan emits delete actions ONLY for stale hits. Live hits stay report-only:
@@ -121,6 +173,11 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 	if !ok {
 		return fail(fmt.Errorf("leaks: %q matches no registered leak signature — refusing", a.Target))
 	}
+	if sig.Family != nil {
+		// A family target is a handle (root/prefix*), not a path: the
+		// members are re-discovered and re-proven one by one.
+		return m.applyFamily(ctx, sig, a)
+	}
 	// TOCTOU guard: never trust staleness carried over from Scan/Plan.
 	item, ok := m.inspect(ctx, sig, a.Target)
 	if !ok {
@@ -130,7 +187,7 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return fail(fmt.Errorf("leaks: %q went LIVE between plan and apply — refusing (%s)",
 			a.Target, item.Evidence["lsof"]))
 	}
-	if err := m.safety.CanDeleteLeakTarget(a.Target, sig.Globs); err != nil {
+	if err := m.safety.CanDeleteLeakTarget(a.Target, sig.allGlobs()); err != nil {
 		return fail(err)
 	}
 	freed, err := sizer.FreedByDelete(filepath.Dir(a.Target), func() error {
@@ -151,13 +208,24 @@ func (m *Module) signatureFor(path string) (Signature, bool) {
 	}
 	clean := filepath.Clean(abs)
 	for _, sig := range m.sigs {
-		for _, g := range sig.Globs {
+		for _, g := range sig.allGlobs() {
 			if ok, err := filepath.Match(g, clean); err == nil && ok {
 				return sig, true
 			}
 		}
 	}
 	return Signature{}, false
+}
+
+// isScratchEntry reports whether path has the per-entry leaf shape of a
+// session signature (<session>/<ScratchDir>/<entry>).
+func isScratchEntry(sig Signature, path string) bool {
+	for _, g := range sig.scratchGlobs() {
+		if ok, err := filepath.Match(g, path); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // inspect classifies and truth-sizes one glob hit. ok=false means the hit is
@@ -217,7 +285,37 @@ func (m *Module) inspect(ctx context.Context, sig Signature, path string) (modul
 // classify runs the signature's staleness rule, recording the proof trail
 // into ev. Any inability to prove staleness classifies LIVE (fail-safe).
 func (m *Module) classify(ctx context.Context, sig Signature, path string, ev map[string]string) bool {
-	if sig.Staleness == StaleWhenAgedAndLsofEmpty {
+	minAge := sig.MinAge
+	aged := sig.Staleness == StaleWhenAgedAndLsofEmpty
+	if sig.Staleness == StaleWhenSessionDead && sig.Session != nil {
+		switch {
+		case isScratchEntry(sig, path):
+			// Per-entry rule inside a session's scratch dir: idle past
+			// EntryIdle and nothing open. The session's own liveness is
+			// irrelevant here — an idle entry is reclaimable either way.
+			ev["staleness_rule"] = "scratch-entry-idle+lsof-empty"
+			ev["session_uuid"] = filepath.Base(filepath.Dir(filepath.Dir(path)))
+			aged, minAge = true, sig.Session.EntryIdle
+		case isSessionUUID(filepath.Base(path)):
+			uuid := filepath.Base(path)
+			alive, proof := m.session(ctx, uuid, sig.Session.TranscriptWindow)
+			ev["session_uuid"] = uuid
+			ev["session"] = proof
+			if alive {
+				ev["session_alive"] = "true"
+				ev["age"] = "session is ALIVE — protecting the session dir; idle scratchpad entries are offered separately"
+				return false
+			}
+			ev["session_alive"] = "false"
+			aged, minAge = true, sig.Session.DeadAfter
+		default:
+			// No UUID to check: this signature's non-session globs keep
+			// the plain age gate.
+			ev["staleness_rule"] = StaleWhenAgedAndLsofEmpty.String()
+			aged = true
+		}
+	}
+	if aged {
 		newest, err := newestMtime(path)
 		if err != nil {
 			ev["age"] = "unprovable (" + err.Error() + ") — treating as LIVE (fail-safe)"
@@ -225,10 +323,13 @@ func (m *Module) classify(ctx context.Context, sig Signature, path string, ev ma
 		}
 		age := m.now().Sub(newest)
 		ev["newest_mtime"] = newest.UTC().Format(time.RFC3339)
-		ev["min_age"] = sig.MinAge.String()
-		if age < sig.MinAge {
-			ev["age"] = fmt.Sprintf("newest mtime %s old < min age %s — protecting possible live session", age.Round(time.Second), sig.MinAge)
+		ev["min_age"] = minAge.String()
+		if age < minAge {
+			ev["age"] = fmt.Sprintf("newest mtime %s old < min age %s — protecting possible live session", age.Round(time.Second), minAge)
 			return false
+		}
+		if ev["session_alive"] == "false" {
+			ev["age"] = fmt.Sprintf("session dead and newest mtime %s old ≥ %s", age.Round(time.Second), minAge)
 		}
 	}
 	live, proof := m.probe(ctx, path)

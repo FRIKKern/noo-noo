@@ -36,6 +36,19 @@ const (
 	// sessions whose scratch files exist but are not held open — lsof alone
 	// is insufficient for this class.
 	StaleWhenAgedAndLsofEmpty
+	// StaleWhenFamilyAgedAndLsofEmpty is the sibling-family rule (see
+	// FamilyRule): a hit is one FAMILY of mktemp-style siblings under a
+	// root, stale iff the family has at least MinMembers members, its
+	// newest mtime across every member is older than MinAge, and no
+	// member has a file held open.
+	StaleWhenFamilyAgedAndLsofEmpty
+	// StaleWhenSessionDead is the agent-session rule (see SessionRule): a
+	// session dir named by a UUID is stale iff the session is provably
+	// dead (no process carries its id, transcript quiet), its newest mtime
+	// is older than DeadAfter, and nothing under it is held open. Paths
+	// matched by the same signature whose basename is NOT a UUID fall back
+	// to StaleWhenAgedAndLsofEmpty with the signature's MinAge.
+	StaleWhenSessionDead
 )
 
 func (s Staleness) String() string {
@@ -44,6 +57,10 @@ func (s Staleness) String() string {
 		return "lsof-empty"
 	case StaleWhenAgedAndLsofEmpty:
 		return "aged+lsof-empty"
+	case StaleWhenFamilyAgedAndLsofEmpty:
+		return "family-aged+lsof-empty"
+	case StaleWhenSessionDead:
+		return "session-liveness"
 	default:
 		return "unknown"
 	}
@@ -75,6 +92,73 @@ type Signature struct {
 	// Workaround is evidence-cited advice that prevents the leak class at
 	// its source; it is surfaced verbatim in every hit's Evidence.
 	Workaround string
+	// Family, set with StaleWhenFamilyAgedAndLsofEmpty, switches discovery
+	// from Globs to sibling-family grouping under Family.Roots. Globs then
+	// only name the deletable LEAF shape (root/*) for the safety predicate.
+	Family *FamilyRule
+	// Session, set with StaleWhenSessionDead, names how a glob-matched
+	// session dir is liveness-checked and which subdir carries per-entry
+	// scratch that can go stale inside a live session.
+	Session *SessionRule
+}
+
+// FamilyRule describes mktemp-style sibling families: direct children of
+// a root whose names share a prefix once a trailing random suffix
+// ([-_.]?[A-Za-z0-9]{6,}, or Go's MkdirTemp decimal run) is stripped. A
+// single such dir is nobody's business; a FAMILY of them (bd-two-installs-
+// eBU8d7 x 130, days old, nothing open) is a harness that forgot to clean
+// up — 16,603 of them held 43 GB on the founding machine.
+type FamilyRule struct {
+	// Roots are filepath.Glob patterns naming the directories whose direct
+	// children are grouped, e.g. "/private/var/folders/*/*/T" ($TMPDIR).
+	Roots []string
+	// MinMembers is the smallest sibling count that counts as a family.
+	MinMembers int
+	// ExcludePrefixes drops children whose NAME starts with one of these
+	// before grouping — com.apple.launchd.* socket dirs look exactly like a
+	// family and must never be touched.
+	ExcludePrefixes []string
+}
+
+// SessionRule describes an agent session dir whose basename is the session
+// UUID, so liveness is CHECKABLE instead of guessed from mtime: a session is
+// alive when a process carries `--session-id <uuid>` or its transcript
+// (~/.claude/projects/*/<uuid>.jsonl) was written within TranscriptWindow.
+type SessionRule struct {
+	// ScratchDir is the subdir (relative to the session dir) whose direct
+	// children are offered per-entry while the session is alive.
+	ScratchDir string
+	// DeadAfter is the age gate for a DEAD session: its newest mtime must
+	// be older than this before the whole dir is stale.
+	DeadAfter time.Duration
+	// EntryIdle is the per-entry age gate inside a LIVE session: a direct
+	// child of ScratchDir whose newest mtime is older than this (and that
+	// nothing holds open) is stale on its own.
+	EntryIdle time.Duration
+	// TranscriptWindow is how recently the transcript must have been
+	// written to count as proof of life.
+	TranscriptWindow time.Duration
+}
+
+// scratchGlobs derives the per-entry leaf globs for a session signature:
+// <session glob>/<ScratchDir>/*. Entries are discovered by enumeration (only
+// inside live sessions), never by glob expansion; these globs exist so the
+// safety predicate and signatureFor recognise the entry leaf shape.
+func (s Signature) scratchGlobs() []string {
+	if s.Session == nil || s.Session.ScratchDir == "" {
+		return nil
+	}
+	out := make([]string, 0, len(s.Globs))
+	for _, g := range s.Globs {
+		out = append(out, g+"/"+s.Session.ScratchDir+"/*")
+	}
+	return out
+}
+
+// allGlobs is every leaf shape this signature may delete: the discovery
+// globs plus the derived scratch-entry globs.
+func (s Signature) allGlobs() []string {
+	return append(append([]string{}, s.Globs...), s.scratchGlobs()...)
 }
 
 // DefaultSignatures is the shipped registry: the two live refill classes
@@ -120,12 +204,24 @@ func DefaultSignatures() []Signature {
 				// unbounded is unbounded — the same age+lsof gate applies.
 				"/Volumes/*/dev-caches/tmp/*",
 			},
-			// Scratch files are rarely held open even while a session is
-			// live, so lsof alone is insufficient: the age gate (newest
-			// mtime anywhere in the tree) protects live agent sessions.
-			Staleness: StaleWhenAgedAndLsofEmpty,
-			MinAge:    7 * 24 * time.Hour,
-			Risk:      modules.RiskLow,
+			// Session dirs (basename = session UUID) are liveness-checked:
+			// the 7-day age gate alone protected a 23 GB scratchpad for a
+			// session that was idle but not dead, and would have waited a
+			// week on a dead one. Dead session: whole dir stale after 1h.
+			// Live session: direct scratchpad entries idle 24h are offered
+			// on their own (22 GB freed exactly that way by hand). Paths
+			// without a UUID basename (gocache dirs, redirected tmp) keep
+			// the age gate: scratch files are rarely held open even while
+			// in use, so lsof alone is insufficient there.
+			Staleness: StaleWhenSessionDead,
+			Session: &SessionRule{
+				ScratchDir:       "scratchpad",
+				DeadAfter:        time.Hour,
+				EntryIdle:        24 * time.Hour,
+				TranscriptWindow: 30 * time.Minute,
+			},
+			MinAge: 7 * 24 * time.Hour,
+			Risk:   modules.RiskLow,
 			Workaround: "Agent sessions recreate scratch dirs on demand; nothing regenerable " +
 				"is lost. macOS never cleans /private/tmp on this machine — without noo-noo " +
 				"this class only grows.",
@@ -153,6 +249,29 @@ func DefaultSignatures() []Signature {
 			Risk:      modules.RiskLow,
 			Workaround: "Trial harnesses should remove their workdir on exit (trap cleanup), " +
 				"or create it under a session scratchpad that already has an owner.",
+		},
+		{
+			ID:    "temp-family",
+			Title: "Abandoned mktemp families under $TMPDIR and /private/tmp",
+			// Globs name the deletable LEAF shape only (a direct child of a
+			// root); discovery is family grouping, never glob expansion.
+			Globs: []string{
+				"/private/var/folders/*/*/T/*",
+				"/private/tmp/*",
+			},
+			Staleness: StaleWhenFamilyAgedAndLsofEmpty,
+			Family: &FamilyRule{
+				Roots:           []string{"/private/var/folders/*/*/T", "/private/tmp"},
+				MinMembers:      5,
+				ExcludePrefixes: []string{"com.apple."},
+			},
+			// Same gate as the trial class, for the same reason: a harness
+			// run spans hours, not days, and the family's NEWEST mtime
+			// protects a harness that is still minting siblings.
+			MinAge: 12 * time.Hour,
+			Risk:   modules.RiskLow,
+			Workaround: "os.MkdirTemp/mktemp callers must remove their dir on exit (defer os.RemoveAll / trap). " +
+				"macOS only sweeps $TMPDIR entries untouched for 3 days, and never sweeps /private/tmp.",
 		},
 	}
 }
