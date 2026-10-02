@@ -23,7 +23,8 @@ var schemaSQL string
 // the auto_clean_events DDL lives in exactly one place.
 // v3 added the wave-2 tables: relocation_queue (deferred offload relocations,
 // D24) and disk_space_history (posture data layer, D16/D18).
-const currentSchemaVersion = 3
+// v4 added leak_storm_alerts (per-signature leak-storm notification ledger).
+const currentSchemaVersion = 4
 
 // Store is the noo-noo SQLite handle. Safe for concurrent use; under the hood
 // modernc.org/sqlite serializes writes via a single connection by default.

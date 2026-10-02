@@ -34,15 +34,87 @@ type LeakSource interface {
 // Evidence also carries the signature id, staleness proof trail, and the
 // workaround command verbatim (injected by the leaks module's inspect).
 func Leaks(ctx context.Context, src LeakSource, cfg config.Config) []Suggestion {
-	if !cfg.Heuristics.Leaks.Enabled || src == nil {
+	rep, ok := ScanLeaks(ctx, src, cfg)
+	if !ok {
 		return nil
+	}
+	return LeaksFromReport(src, rep)
+}
+
+// ScanLeaks runs the leak scan once and returns the full report — live hits
+// included — so the tick can feed BOTH the suggestion path (stale only) and
+// the storm detector (every instance) from one lsof pass. ok=false means
+// disabled, no source, or a scan error: fail-safe, an aborted scan yields
+// nothing rather than a partial picture presented as complete.
+func ScanLeaks(ctx context.Context, src LeakSource, cfg config.Config) (modules.Report, bool) {
+	if !cfg.Heuristics.Leaks.Enabled || src == nil {
+		return modules.Report{}, false
 	}
 	rep, err := src.Scan(ctx)
 	if err != nil {
-		// Fail-safe: an aborted scan yields no suggestions rather than a
-		// partial picture presented as complete.
-		return nil
+		return modules.Report{}, false
 	}
+	return rep, true
+}
+
+// LeakStorm is a burst of NEW instances of one leak signature: Count
+// instances whose appearance time falls inside the detection window. A
+// burst is alert-worthy on its own, before any instance is stale enough to
+// clean — 28 Chrome code-sign clones in 20 minutes is a relaunch loop, and
+// the fix is to stop the loop (the signature's Workaround), not to wait for
+// lsof to go quiet.
+type LeakStorm struct {
+	Signature  string
+	Count      int
+	Workaround string
+}
+
+// LeakStorms counts, per signature, the report's instances (live AND stale)
+// that appeared at or after now-window, and returns every signature whose
+// count reaches minCount. appearedAt supplies each path's appearance time
+// (creation time when the filesystem has it, first-sighting otherwise).
+// Pure: the tick owns rate-limiting and notification.
+func LeakStorms(rep modules.Report, appearedAt func(path string) time.Time, now time.Time, window time.Duration, minCount int) []LeakStorm {
+	cutoff := now.Add(-window)
+	type agg struct {
+		count      int
+		workaround string
+	}
+	var order []string
+	bySig := map[string]*agg{}
+	for _, it := range rep.Items {
+		if appearedAt(it.Path).Before(cutoff) {
+			continue
+		}
+		sig := it.Evidence["signature"]
+		if sig == "" {
+			sig = "unknown-leak"
+		}
+		a, ok := bySig[sig]
+		if !ok {
+			a = &agg{}
+			bySig[sig] = a
+			order = append(order, sig)
+		}
+		a.count++
+		if w := it.Evidence["workaround"]; w != "" {
+			a.workaround = w
+		}
+	}
+	var out []LeakStorm
+	for _, sig := range order {
+		a := bySig[sig]
+		if a.count < minCount {
+			continue
+		}
+		out = append(out, LeakStorm{Signature: sig, Count: a.count, Workaround: a.workaround})
+	}
+	return out
+}
+
+// LeaksFromReport builds the stale-only suggestions from an already-taken
+// report (see Leaks for the semantics).
+func LeaksFromReport(src LeakSource, rep modules.Report) []Suggestion {
 	items := make(map[string]modules.Item, len(rep.Items))
 	for _, it := range rep.Items {
 		items[it.Path] = it

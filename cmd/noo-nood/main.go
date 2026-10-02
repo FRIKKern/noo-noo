@@ -110,6 +110,10 @@ type Daemon struct {
 	// pressure tick deadlocked both on the store's single-writer lock and
 	// froze the daemon at zero CPU with no further tick logs.
 	tickMu sync.Mutex
+	// leakFirstSeen is the storm detector's fallback appearance time for
+	// leak paths without a filesystem birth time (see leakAppearedAt).
+	// Guarded by tickMu; lazily allocated.
+	leakFirstSeen map[string]time.Time
 }
 
 // manualKicker satisfies ipc.SchedulerKicker by running one manual tick

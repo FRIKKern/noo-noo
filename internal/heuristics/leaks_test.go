@@ -3,8 +3,10 @@ package heuristics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/FRIKKern/noo-noo/internal/config"
 	"github.com/FRIKKern/noo-noo/internal/core"
@@ -109,6 +111,44 @@ func TestLeaksScanErrorFailsSafe(t *testing.T) {
 	src := &fakeLeakSource{scanErr: errors.New("boom")}
 	if got := Leaks(context.Background(), src, config.Defaults()); got != nil {
 		t.Fatalf("erroring scan emitted %d suggestions, want none", len(got))
+	}
+}
+
+// TestLeakStormsCountsLiveAndStaleWithinWindow: the storm detector counts
+// EVERY instance (live clones included — they are live precisely because
+// the relaunch loop is running), only inside the window, per signature,
+// and only at or above the threshold.
+func TestLeakStormsCountsLiveAndStaleWithinWindow(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	born := map[string]time.Time{}
+	var items []modules.Item
+	add := func(path, sig, staleness string, age time.Duration) {
+		born[path] = now.Add(-age)
+		items = append(items, modules.Item{Path: path, Evidence: map[string]string{
+			"signature": sig, "staleness": staleness, "workaround": testWorkaround,
+		}})
+	}
+	for i := 0; i < 9; i++ {
+		add(fmt.Sprintf("/x/chrome-%d", i), "chrome-code-sign-clone", "live", time.Duration(i)*time.Minute)
+	}
+	add("/x/chrome-stale", "chrome-code-sign-clone", "stale", 30*time.Minute) // 10th, inside window
+	add("/x/chrome-old", "chrome-code-sign-clone", "stale", 3*time.Hour)      // outside window
+	for i := 0; i < 5; i++ {
+		add(fmt.Sprintf("/x/scratch-%d", i), "private-tmp-agent-scratch", "live", time.Minute)
+	}
+	appearedAt := func(p string) time.Time { return born[p] }
+
+	storms := LeakStorms(modules.Report{Items: items}, appearedAt, now, time.Hour, 10)
+	if len(storms) != 1 {
+		t.Fatalf("storms = %+v, want exactly the chrome one", storms)
+	}
+	s := storms[0]
+	if s.Signature != "chrome-code-sign-clone" || s.Count != 10 || s.Workaround != testWorkaround {
+		t.Errorf("storm = %+v", s)
+	}
+	// Threshold is inclusive at 10 and exclusive below it.
+	if got := LeakStorms(modules.Report{Items: items}, appearedAt, now, time.Hour, 11); len(got) != 0 {
+		t.Errorf("minCount 11 should yield no storm, got %+v", got)
 	}
 }
 

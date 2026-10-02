@@ -104,8 +104,9 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 		}
 	}
 
-	// Step 2: run heuristics over the fresh data.
-	suggestions := d.collectSuggestions(ctx, light)
+	// Step 2: run heuristics over the fresh data. The leak report comes
+	// back whole (live hits included) for the storm detector in step 4.
+	suggestions, leakRep := d.collectSuggestions(ctx, light)
 
 	// Persist (deduped) before deciding what to auto-clean — autoclean
 	// dismisses by id, so we need real ids on the in-memory rows. The
@@ -146,8 +147,99 @@ func (d *Daemon) RunTick(ctx context.Context, trigger TickTrigger) error {
 	// once, not on every tick it stays unfixed.
 	leakSugs, otherSugs := splitLeaks(suggestions)
 	d.notifyLeaks(leakSugs)
+	// Leak STORMS are orthogonal to suggestions: a burst of new instances
+	// alerts even when every one of them is still live (so never a
+	// suggestion) and every older one is already an open row (so deduped).
+	// That exact combination is how 28 fresh Chrome clones in 20 minutes
+	// produced "0 new suggestion(s)" ticks and no notification at all.
+	d.notifyLeakStorms(leakRep)
 	d.tickNotify(deleted, freed, len(otherSugs))
 	return nil
+}
+
+// Leak-storm law: >= leakStormMinCount new instances of one signature
+// inside leakStormWindow is a crash/relaunch loop; alert at most once per
+// leakStormCooldown per signature (ledger in the store, survives restarts).
+const (
+	leakStormMinCount = 10
+	leakStormWindow   = time.Hour
+	leakStormCooldown = 6 * time.Hour
+)
+
+// leakAppearedAt is when a leak instance came into being: the filesystem's
+// creation time where it has one, else the tick that first saw the path.
+// The first-sighting map is per-process (RunTick is serialized by tickMu),
+// which is exactly right: on restart every existing instance re-derives its
+// true birth time from disk, so a restart never fakes a storm.
+func (d *Daemon) leakAppearedAt(path string) time.Time {
+	if t, ok := pathBirthTime(path); ok {
+		return t
+	}
+	if d.leakFirstSeen == nil {
+		d.leakFirstSeen = map[string]time.Time{}
+	}
+	if t, ok := d.leakFirstSeen[path]; ok {
+		return t
+	}
+	now := d.now()
+	d.leakFirstSeen[path] = now
+	return now
+}
+
+// leakStormAlert is the storm notification copy: the signature, how many
+// new instances in the window, what it means, and — verbatim from the
+// signature registry — the permanent fix. Pure so tests pin the text.
+func leakStormAlert(s heuristics.LeakStorm, window time.Duration) leakAlert {
+	body := fmt.Sprintf("%s: %d new leak(s) in the last %s — something is crashing or relaunching in a loop.",
+		s.Signature, s.Count, humanWindow(window))
+	if s.Workaround != "" {
+		body += " Permanent fix: " + s.Workaround
+	}
+	return leakAlert{Title: "noo-noo — leak storm", Body: body}
+}
+
+// humanWindow renders a storm window for copy: "hour" for exactly 1h, else
+// the Duration string.
+func humanWindow(w time.Duration) string {
+	if w == time.Hour {
+		return "hour"
+	}
+	return w.String()
+}
+
+// notifyLeakStorms detects storms in the tick's full leak report and posts
+// one storm notification per signature, rate-limited through the store
+// ledger. Always logs a detected storm, even when the cooldown mutes the
+// notification, so the err.log tells the whole story.
+func (d *Daemon) notifyLeakStorms(rep modules.Report) {
+	if len(rep.Items) == 0 {
+		return
+	}
+	now := d.now()
+	storms := heuristics.LeakStorms(rep, d.leakAppearedAt, now, leakStormWindow, leakStormMinCount)
+	for _, s := range storms {
+		last, fired, err := d.store.LastLeakStormAlert(s.Signature)
+		if err != nil {
+			log.Printf("leak storm: ledger read: %v", err)
+		}
+		if fired && now.Sub(last) < leakStormCooldown {
+			log.Printf("leak storm: %s %d new in %s (alert muted; last fired %s ago)",
+				s.Signature, s.Count, leakStormWindow, now.Sub(last).Round(time.Minute))
+			continue
+		}
+		log.Printf("leak storm: %s %d new in %s — alerting", s.Signature, s.Count, leakStormWindow)
+		if !d.cfg.Notify.Enabled {
+			continue
+		}
+		al := leakStormAlert(s, leakStormWindow)
+		if err := notifySendFn(al.Title, al.Body, ""); err != nil {
+			log.Printf("notify leak storm: %v", err)
+			continue
+		}
+		if err := d.store.RecordLeakStormAlert(s.Signature, now, s.Count); err != nil {
+			log.Printf("leak storm: ledger write: %v", err)
+		}
+	}
 }
 
 // pendingAutoApplyAllowed is the daemon-side gate cascade for auto-applying
@@ -237,8 +329,12 @@ func splitLeaks(in []heuristics.Suggestion) (leakSugs, others []heuristics.Sugge
 // Mirrors what main.go's runScan used to do; pulled into tick.go so the
 // autoclean branch can see the same in-memory list (ids populated by
 // persistNew).
-func (d *Daemon) collectSuggestions(ctx context.Context, light bool) []heuristics.Suggestion {
+//
+// The leak scan runs ONCE and its whole report (live + stale) is returned
+// beside the suggestions so the storm detector shares the lsof pass.
+func (d *Daemon) collectSuggestions(ctx context.Context, light bool) ([]heuristics.Suggestion, modules.Report) {
 	var all []heuristics.Suggestion
+	var leakRep modules.Report
 	if !light && d.cfg.Heuristics.IdleRepos.Enabled {
 		all = append(all, heuristics.IdleRepos(ctx, d.store, d.cfg)...)
 	}
@@ -246,12 +342,16 @@ func (d *Daemon) collectSuggestions(ctx context.Context, light bool) []heuristic
 		all = append(all, heuristics.CacheVelocity(ctx, d.store, d.cfg)...)
 	}
 	if d.cfg.Heuristics.Leaks.Enabled {
-		all = append(all, heuristics.Leaks(ctx, leakSourceFn(d), d.cfg)...)
+		src := leakSourceFn(d)
+		if rep, ok := heuristics.ScanLeaks(ctx, src, d.cfg); ok {
+			leakRep = rep
+			all = append(all, heuristics.LeaksFromReport(src, rep)...)
+		}
 	}
 	if !light {
 		all = append(all, heuristics.Worktrees(ctx, worktreeSourceFn(d), d.cfg.Worktrees.Enabled)...)
 	}
-	return all
+	return all, leakRep
 }
 
 // worktreeSourceFn builds the worktree sweeper the tick's heuristic scans —
@@ -282,6 +382,7 @@ func worktreeConfig(d *Daemon) worktrees.Config {
 // slice so the autoclean branch only acts on fresh ones.
 func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion {
 	out := in[:0]
+	alreadyOpen := 0
 	for _, s := range in {
 		open, err := d.store.HasOpenSuggestion(s.Module, s.Target)
 		if err != nil {
@@ -289,6 +390,7 @@ func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion 
 			continue
 		}
 		if open {
+			alreadyOpen++
 			continue
 		}
 		stored := toStored(s)
@@ -300,7 +402,9 @@ func (d *Daemon) persistNew(in []heuristics.Suggestion) []heuristics.Suggestion 
 		s.ID = id
 		out = append(out, s)
 	}
-	log.Printf("tick: %d new suggestion(s) (%d candidate)", len(out), len(in))
+	// "already open" is spelled out: "0 new (29 candidate)" read as a bug
+	// when every candidate was simply an open row from an earlier tick.
+	log.Printf("tick: %d new suggestion(s) (%d candidate, %d already open)", len(out), len(in), alreadyOpen)
 	return out
 }
 
