@@ -51,6 +51,13 @@ func (*Module) Name() string { return "leaks" }
 func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 	rep := modules.Report{Module: "leaks"}
 	seen := map[string]bool{}
+	// Report.Total is the UNION of unique extents across every hit, not the
+	// sum of rows: sibling hits are routinely clones of one another (the
+	// code_sign_clone class), and the sum of their per-row sizes is the
+	// du-fiction the founding incident was made of. Rows keep their own
+	// per-path measurement; the headline is what deleting all of them
+	// could at most free.
+	union := sizer.NewUnion()
 	for _, sig := range m.sigs {
 		for _, g := range sig.Globs {
 			matches, err := filepath.Glob(g)
@@ -68,15 +75,15 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 					continue
 				}
 				seen[p] = true
-				item, ok := m.inspect(ctx, sig, p)
+				item, ok := m.inspect(ctx, sig, p, union)
 				if !ok {
 					continue
 				}
 				rep.Items = append(rep.Items, item)
-				rep.Total += item.Size
 			}
 		}
 	}
+	rep.Total = core.Bytes(union.UniqueAllocated())
 	return rep, nil
 }
 
@@ -122,7 +129,7 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return fail(fmt.Errorf("leaks: %q matches no registered leak signature — refusing", a.Target))
 	}
 	// TOCTOU guard: never trust staleness carried over from Scan/Plan.
-	item, ok := m.inspect(ctx, sig, a.Target)
+	item, ok := m.inspect(ctx, sig, a.Target, nil)
 	if !ok {
 		return fail(fmt.Errorf("leaks: %q no longer inspectable (gone, symlink, or not owned by uid %d) — refusing", a.Target, m.uid))
 	}
@@ -162,8 +169,9 @@ func (m *Module) signatureFor(path string) (Signature, bool) {
 
 // inspect classifies and truth-sizes one glob hit. ok=false means the hit is
 // not a candidate at all (vanished, a symlink, or not owned by the scanning
-// user) and must not appear in reports.
-func (m *Module) inspect(ctx context.Context, sig Signature, path string) (modules.Item, bool) {
+// user) and must not appear in reports. A non-nil union also receives the
+// hit's extents so Scan can headline the set-wide unique total.
+func (m *Module) inspect(ctx context.Context, sig Signature, path string, union *sizer.Union) (modules.Item, bool) {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return modules.Item{}, false
@@ -195,7 +203,11 @@ func (m *Module) inspect(ctx context.Context, sig Signature, path string) (modul
 	// deleting can actually reclaim (APFS-clone- and sparse-aware). The
 	// delta is the du-fiction the founding incident was made of.
 	var uniq, blocks int64
-	if ts, err := sizer.UniqueAllocated(path); err == nil {
+	measure := func() (sizer.TreeSize, error) { return sizer.UniqueAllocated(path) }
+	if union != nil {
+		measure = func() (sizer.TreeSize, error) { return union.Add(path) }
+	}
+	if ts, err := measure(); err == nil {
 		uniq = ts.UniqueAllocated
 		ev["unique_allocated_bytes"] = strconv.FormatInt(uniq, 10)
 	} else {

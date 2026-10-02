@@ -212,13 +212,18 @@ func (m *Module) scanPlaybook(pb Playbook, verdict string, rep *modules.Report) 
 		ev["native_command"] = renderNativeCommand(pb.NativeCommand, m.cfg.DestRoot)
 		ev["suggestion"] = "use the app's own relocation — noo-noo will not move this (the app would regrow the store at the old path)"
 	case ClassRelocate:
+		// The headline total is the measured unique bytes when we have
+		// them (what relocating actually frees locally); allocated blocks
+		// are the fallback, never the headline when truth is available.
+		reclaim := size
 		if uniq, err := m.sizes.UniqueAllocated(p); err == nil {
 			ev["unique_allocated_bytes"] = strconv.FormatInt(int64(uniq), 10)
+			reclaim = uniq
 		}
 		if pb.NeverDelete {
 			ev["never_delete"] = "true"
 		}
-		rep.Total += size
+		rep.Total += reclaim
 	}
 	if pb.pathGated() {
 		ev["gate"] = "path"

@@ -36,7 +36,7 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 		offloadMod,
 	}
 
-	var grand core.Bytes
+	var grand, grandApparent core.Bytes
 	for _, m := range all {
 		rep, err := m.Scan(ctx)
 		if err != nil {
@@ -44,11 +44,13 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 			continue
 		}
 		_ = PrintReport(app.Out, rep, *asJSON)
-		grand += rep.Total
+		reclaimable, apparent := reportTotals(rep)
+		grand += reclaimable
+		grandApparent += apparent
 		_, _ = fmt.Fprintln(app.Out)
 	}
 	if !*asJSON {
-		_, _ = fmt.Fprintf(app.Out, "Grand total reclaimable: %s\n", grand)
+		_, _ = fmt.Fprintf(app.Out, "Grand total reclaimable: %s%s\n", grand, apparentSuffix(grand, grandApparent))
 	}
 	return 0
 }
