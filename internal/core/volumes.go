@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -34,6 +35,9 @@ const (
 type Volume struct {
 	UUID           string
 	MountPoint     string
+	Name           string // diskutil VolumeName ("Recovery", "Kompis")
+	Container      string // diskutil ParentWholeDisk: the APFS container / whole disk ("disk3")
+	PhysicalDisk   string // whole disk behind the first APFS physical store ("disk0"); empty when not APFS
 	TotalBytes     int64
 	FreeBytes      int64
 	WritableMedia  bool
@@ -80,10 +84,15 @@ func classifyVolume(writableMedia, writableVolume bool) VolumeClass {
 // diskutil, odd volume) is distinguishable from an explicit false and defaults
 // to writable — we never brand a volume media-RO on absence of evidence.
 type diskutilVolumeInfo struct {
-	VolumeUUID     string `json:"VolumeUUID"`
-	MountPoint     string `json:"MountPoint"`
-	WritableVolume *bool  `json:"WritableVolume"`
-	WritableMedia  *bool  `json:"WritableMedia"`
+	VolumeUUID         string `json:"VolumeUUID"`
+	MountPoint         string `json:"MountPoint"`
+	VolumeName         string `json:"VolumeName"`
+	ParentWholeDisk    string `json:"ParentWholeDisk"`
+	WritableVolume     *bool  `json:"WritableVolume"`
+	WritableMedia      *bool  `json:"WritableMedia"`
+	APFSPhysicalStores []struct {
+		APFSPhysicalStore string `json:"APFSPhysicalStore"`
+	} `json:"APFSPhysicalStores"`
 }
 
 // diskutilList is the subset of `diskutil list -plist` we use: the names of the
@@ -95,13 +104,64 @@ type diskutilList struct {
 // boolOrTrue dereferences a *bool defaulting missing→true.
 func boolOrTrue(b *bool) bool { return b == nil || *b }
 
+// systemVolumeNames are the APFS helper volumes macOS mounts under /Volumes
+// on the boot container (and the Recovery HD of older layouts). None of them
+// is somewhere a user could put data, whatever statfs says about them.
+//
+// Deliberately NOT here: "Data" and "Hardware" — plausible names for a
+// user's external drive. The boot container's own Data volume is caught by
+// the same-container rule instead.
+var systemVolumeNames = map[string]bool{
+	"Recovery": true, "Recovery HD": true, "Preboot": true, "VM": true,
+	"Update": true, "xART": true, "xarts": true, "iSCPreboot": true,
+}
+
+// IsSystemVolumeName reports whether name is one of macOS's own helper
+// volumes (Recovery, Preboot, VM, Update, ...).
+func IsSystemVolumeName(name string) bool { return systemVolumeNames[name] }
+
+// IsExternalCandidate reports whether v is a volume a user could actually
+// offload to: not the boot volume under another name, not on the boot
+// volume's APFS container or physical disk, and not a macOS helper volume.
+// Pure so the inventory filter is table-testable with fake volume lists.
+//
+// A same-container sibling (/Volumes/Recovery is disk3s3 next to the boot
+// disk3s1s1) reports the boot disk's capacity and free space verbatim — it
+// is the SAME space, and counting it as external headroom was a lie.
+func IsExternalCandidate(boot, v Volume) bool {
+	if v.MountPoint == "/" || (v.UUID != "" && v.UUID == boot.UUID) {
+		return false
+	}
+	if v.Container != "" && v.Container == boot.Container {
+		return false
+	}
+	if v.PhysicalDisk != "" && v.PhysicalDisk == boot.PhysicalDisk {
+		return false
+	}
+	return !IsSystemVolumeName(v.Name)
+}
+
+// wholeDisk strips the slice suffix from a BSD device name: disk0s2 → disk0.
+func wholeDisk(dev string) string {
+	const prefix = "disk"
+	if !strings.HasPrefix(dev, prefix) {
+		return dev
+	}
+	i := len(prefix)
+	for i < len(dev) && dev[i] >= '0' && dev[i] <= '9' {
+		i++
+	}
+	return dev[:i]
+}
+
 // ListVolumes returns the boot volume ("/") plus every mounted /Volumes/*
-// volume, each with its UUID, capacity (statfs), and posture class. The runner
-// is injected (nil → ExecOutputRunner) so tests fake the diskutil→plutil chain
-// exactly like VolGuard does. Per-volume failures are tolerated: a volume whose
-// diskutil info won't parse or whose statfs fails is still reported (with the
-// data we could gather) rather than silently dropped — an unreadable mounted
-// volume is itself a posture signal.
+// volume that is genuinely elsewhere (see IsExternalCandidate), each with its
+// UUID, capacity (statfs), and posture class. The runner is injected (nil →
+// ExecOutputRunner) so tests fake the diskutil→plutil chain exactly like
+// VolGuard does. Per-volume failures are tolerated: a volume whose diskutil
+// info won't parse or whose statfs fails is still reported (with the data we
+// could gather) rather than silently dropped — an unreadable mounted volume
+// is itself a posture signal.
 func ListVolumes(ctx context.Context, runner OutputRunner) ([]Volume, error) {
 	if runner == nil {
 		runner = ExecOutputRunner{}
@@ -124,6 +184,7 @@ func ListVolumes(ctx context.Context, runner OutputRunner) ([]Volume, error) {
 	}
 
 	var out []Volume
+	var boot Volume
 	for _, mount := range mounts {
 		select {
 		case <-ctx.Done():
@@ -133,6 +194,13 @@ func ListVolumes(ctx context.Context, runner OutputRunner) ([]Volume, error) {
 		v, err := volumeAt(ctx, runner, mount)
 		if err != nil {
 			// Tolerate: skip a mount whose identity we cannot resolve at all.
+			continue
+		}
+		if mount == "/" {
+			boot = v
+		} else if !IsExternalCandidate(boot, v) {
+			// Same container/disk as the boot volume, or a macOS helper
+			// volume: not external headroom, however statfs phrases it.
 			continue
 		}
 		out = append(out, v)
@@ -159,9 +227,14 @@ func volumeAt(ctx context.Context, runner OutputRunner, mount string) (Volume, e
 	v := Volume{
 		UUID:           vi.VolumeUUID,
 		MountPoint:     mp,
+		Name:           vi.VolumeName,
+		Container:      vi.ParentWholeDisk,
 		WritableMedia:  wm,
 		WritableVolume: wv,
 		Class:          classifyVolume(wm, wv),
+	}
+	if len(vi.APFSPhysicalStores) > 0 {
+		v.PhysicalDisk = wholeDisk(vi.APFSPhysicalStores[0].APFSPhysicalStore)
 	}
 	// Capacity is best-effort: a statfs failure (e.g. a mount that vanished
 	// between list and info) leaves total/free at 0 but keeps the posture.
