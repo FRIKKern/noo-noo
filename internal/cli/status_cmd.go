@@ -377,7 +377,7 @@ func renderStatus(out io.Writer, d statusData) {
 	}
 
 	_, _ = fmt.Fprintln(out, "\nMemory")
-	renderMemory(out, d)
+	renderStatusMemory(out, d)
 
 	_, _ = fmt.Fprintln(out, "\nExternal volumes")
 	if len(d.Externals) == 0 {
@@ -408,11 +408,11 @@ func renderStatus(out io.Writer, d statusData) {
 	_, _ = fmt.Fprintf(out, "\nVerdict: %s\n", verdictSentence(i.TotalBytes, d.Externals, d.Offload))
 }
 
-// renderMemory prints the memory section: the numbers, the verdict with the
+// renderStatusMemory prints the memory section: the numbers, the verdict with the
 // figures that earned it, and the top processes by compressed memory (the
 // ones to quit when the verdict says so). Tolerated read failures become
 // notes, never a missing section.
-func renderMemory(out io.Writer, d statusData) {
+func renderStatusMemory(out io.Writer, d statusData) {
 	if !d.MemoryOK {
 		_, _ = fmt.Fprintf(out, "  unavailable: %s\n", d.MemoryNote)
 		return

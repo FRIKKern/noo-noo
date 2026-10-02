@@ -60,10 +60,17 @@ func (*Module) Name() string { return "leaks" }
 func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 	rep := modules.Report{Module: "leaks"}
 	seen := map[string]bool{}
+	// Report.Total is the UNION of unique extents across every hit, not the
+	// sum of rows: sibling hits are routinely clones of one another (the
+	// code_sign_clone class), and the sum of their per-row sizes is the
+	// du-fiction the founding incident was made of. Rows keep their own
+	// per-path measurement; the headline is what deleting all of them
+	// could at most free.
+	union := sizer.NewUnion()
 	for _, sig := range m.sigs {
 		if sig.Family != nil {
 			// Family signatures discover by sibling grouping, not by glob.
-			if err := m.scanFamilies(ctx, sig, seen, &rep); err != nil {
+			if err := m.scanFamilies(ctx, sig, seen, &rep, union); err != nil {
 				return rep, err
 			}
 			continue
@@ -84,12 +91,11 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 					continue
 				}
 				seen[p] = true
-				item, ok := m.inspect(ctx, sig, p)
+				item, ok := m.inspect(ctx, sig, p, union)
 				if !ok {
 					continue
 				}
 				rep.Items = append(rep.Items, item)
-				rep.Total += item.Size
 				// A LIVE session still sheds idle scratch entries: offer
 				// them one by one (the human freed 22 GB inside a live
 				// session exactly this way).
@@ -99,15 +105,15 @@ func (m *Module) Scan(ctx context.Context) (modules.Report, error) {
 							continue
 						}
 						seen[entry] = true
-						if it, ok := m.inspect(ctx, sig, entry); ok {
+						if it, ok := m.inspect(ctx, sig, entry, union); ok {
 							rep.Items = append(rep.Items, it)
-							rep.Total += it.Size
 						}
 					}
 				}
 			}
 		}
 	}
+	rep.Total = core.Bytes(union.UniqueAllocated())
 	return rep, nil
 }
 
@@ -179,7 +185,7 @@ func (m *Module) Apply(ctx context.Context, a modules.Action) (modules.Result, e
 		return m.applyFamily(ctx, sig, a)
 	}
 	// TOCTOU guard: never trust staleness carried over from Scan/Plan.
-	item, ok := m.inspect(ctx, sig, a.Target)
+	item, ok := m.inspect(ctx, sig, a.Target, nil)
 	if !ok {
 		return fail(fmt.Errorf("leaks: %q no longer inspectable (gone, symlink, or not owned by uid %d) — refusing", a.Target, m.uid))
 	}
@@ -230,8 +236,9 @@ func isScratchEntry(sig Signature, path string) bool {
 
 // inspect classifies and truth-sizes one glob hit. ok=false means the hit is
 // not a candidate at all (vanished, a symlink, or not owned by the scanning
-// user) and must not appear in reports.
-func (m *Module) inspect(ctx context.Context, sig Signature, path string) (modules.Item, bool) {
+// user) and must not appear in reports. A non-nil union also receives the
+// hit's extents so Scan can headline the set-wide unique total.
+func (m *Module) inspect(ctx context.Context, sig Signature, path string, union *sizer.Union) (modules.Item, bool) {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return modules.Item{}, false
@@ -263,7 +270,11 @@ func (m *Module) inspect(ctx context.Context, sig Signature, path string) (modul
 	// deleting can actually reclaim (APFS-clone- and sparse-aware). The
 	// delta is the du-fiction the founding incident was made of.
 	var uniq, blocks int64
-	if ts, err := sizer.UniqueAllocated(path); err == nil {
+	measure := func() (sizer.TreeSize, error) { return sizer.UniqueAllocated(path) }
+	if union != nil {
+		measure = func() (sizer.TreeSize, error) { return union.Add(path) }
+	}
+	if ts, err := measure(); err == nil {
 		uniq = ts.UniqueAllocated
 		ev["unique_allocated_bytes"] = strconv.FormatInt(uniq, 10)
 	} else {

@@ -136,7 +136,7 @@ func fsBlockSize(fd uintptr) int64 {
 // hole — those regions are skipped, not counted. Regions where the fcntl
 // errors instead are skipped via SEEK_DATA. Returns the number of regions
 // that could not be mapped or skipped cleanly.
-func addFileExtents(fd uintptr, dev int32, size int64, set *extentSet) (errs int) {
+func addFileExtents(fd uintptr, dev int32, size int64, sets ...*extentSet) (errs int) {
 	if size <= 0 {
 		return 0
 	}
@@ -154,7 +154,9 @@ func addFileExtents(fd uintptr, dev int32, size int64, set *extentSet) (errs int
 			if l2p.Devoffset >= 0 {
 				// Real extent. A hole reports devoffset -1 and
 				// is skipped: it occupies no space.
-				set.add(dev, l2p.Devoffset, l2p.Contigbytes)
+				for _, set := range sets {
+					set.add(dev, l2p.Devoffset, l2p.Contigbytes)
+				}
 			}
 			off += l2p.Contigbytes
 			continue
@@ -199,50 +201,105 @@ func UniqueAllocated(paths ...string) (TreeSize, error) {
 	set := newExtentSet()
 	seen := make(map[devIno]struct{})
 	for _, root := range paths {
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if p == root {
-					return err
-				}
-				ts.Errs++
-				return nil
-			}
-			if !d.Type().IsRegular() {
-				return nil
-			}
-			info, err := d.Info()
-			if err != nil {
-				if !errors.Is(err, fs.ErrNotExist) {
-					ts.Errs++
-				}
-				return nil
-			}
-			st, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
-				ts.Errs++
-				return nil
-			}
-			key := devIno{dev: st.Dev, ino: st.Ino}
-			if _, dup := seen[key]; dup {
-				return nil
-			}
-			seen[key] = struct{}{}
-			ts.Files++
-			ts.Logical += st.Size
-			ts.Blocks += st.Blocks * blockUnit
-			f, err := os.OpenFile(p, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
-			if err != nil {
-				ts.Errs++
-				return nil
-			}
-			ts.Errs += addFileExtents(f.Fd(), st.Dev, st.Size, set)
-			_ = f.Close()
-			return nil
-		})
-		if err != nil {
+		if err := walkExtents(root, seen, &ts, set); err != nil {
 			return TreeSize{}, err
 		}
 	}
 	ts.UniqueAllocated = set.total()
 	return ts, nil
+}
+
+// Union accumulates per-tree UniqueAllocated measurements AND the union
+// across all of them, from one walk per tree. A module reporting many
+// sibling hits (33 Chrome code_sign_clone dirs, each a clone of the same
+// app) needs both numbers: each row's own unique bytes, and the honest
+// set-wide total — far smaller than the sum of rows when the rows share
+// extents with each other. Summing the rows is the "41.5 GB claimed,
+// 12.7 MB freed" fiction.
+type Union struct {
+	set *extentSet
+}
+
+// NewUnion returns an empty accumulator.
+func NewUnion() *Union { return &Union{set: newExtentSet()} }
+
+// Add measures one tree exactly like UniqueAllocated(path) and also merges
+// its extents into the union. The returned TreeSize is the tree's OWN
+// measurement, independent of what was added before.
+func (u *Union) Add(path string) (TreeSize, error) {
+	ts := TreeSize{}
+	own := newExtentSet()
+	if err := walkExtents(path, make(map[devIno]struct{}), &ts, own, u.set); err != nil {
+		return TreeSize{}, err
+	}
+	ts.UniqueAllocated = own.total()
+	return ts, nil
+}
+
+// AddAll measures a set of trees exactly like UniqueAllocated(paths...) —
+// one shared extent set, hardlinks deduplicated across the set — and also
+// merges their extents into the union. A family of sibling temp dirs is one
+// item in a report, so it is measured as one set and still counted once in
+// the headline.
+func (u *Union) AddAll(paths ...string) (TreeSize, error) {
+	ts := TreeSize{}
+	own := newExtentSet()
+	seen := make(map[devIno]struct{})
+	for _, root := range paths {
+		if err := walkExtents(root, seen, &ts, own, u.set); err != nil {
+			return TreeSize{}, err
+		}
+	}
+	ts.UniqueAllocated = own.total()
+	return ts, nil
+}
+
+// UniqueAllocated returns the unique allocated bytes of everything added so
+// far, with extents shared across trees counted once.
+func (u *Union) UniqueAllocated() int64 { return u.set.total() }
+
+// walkExtents walks one tree, adding every regular file's physical extents
+// to each of the given sets and accumulating Files/Errs/Logical/Blocks into
+// ts. seen deduplicates hardlinks by (dev, inode) across calls.
+func walkExtents(root string, seen map[devIno]struct{}, ts *TreeSize, sets ...*extentSet) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			ts.Errs++
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				ts.Errs++
+			}
+			return nil
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			ts.Errs++
+			return nil
+		}
+		key := devIno{dev: st.Dev, ino: st.Ino}
+		if _, dup := seen[key]; dup {
+			return nil
+		}
+		seen[key] = struct{}{}
+		ts.Files++
+		ts.Logical += st.Size
+		ts.Blocks += st.Blocks * blockUnit
+		f, err := os.OpenFile(p, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+		if err != nil {
+			ts.Errs++
+			return nil
+		}
+		ts.Errs += addFileExtents(f.Fd(), st.Dev, st.Size, sets...)
+		_ = f.Close()
+		return nil
+	})
 }

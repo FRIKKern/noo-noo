@@ -283,3 +283,46 @@ func TestUniqueAllocatedMissingRootErrors(t *testing.T) {
 		t.Error("UniqueAllocated on a missing root should return an error")
 	}
 }
+
+// TestUnionPerTreeAndSetWide pins the Union contract on a clone pair: each
+// tree's own measurement is the full file, the set-wide union counts the
+// shared extents once — the number a module headline must report.
+func TestUnionPerTreeAndSetWide(t *testing.T) {
+	base := t.TempDir()
+	requireAPFS(t, base)
+	dirA := filepath.Join(base, "a")
+	dirB := filepath.Join(base, "b")
+	for _, d := range []string{dirA, dirB} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	size := int64(4 * testMB)
+	writeFilled(t, filepath.Join(dirA, "orig.bin"), size)
+	if err := unix.Clonefile(filepath.Join(dirA, "orig.bin"), filepath.Join(dirB, "clone.bin"), 0); err != nil {
+		t.Fatalf("clonefile: %v", err)
+	}
+
+	u := NewUnion()
+	a, err := u.Add(dirA)
+	if err != nil {
+		t.Fatalf("Add(a): %v", err)
+	}
+	b, err := u.Add(dirB)
+	if err != nil {
+		t.Fatalf("Add(b): %v", err)
+	}
+	lo, hi := size*95/100, size*13/10
+	for name, ts := range map[string]TreeSize{"a": a, "b": b} {
+		if ts.UniqueAllocated < lo || ts.UniqueAllocated > hi {
+			t.Errorf("tree %s own UniqueAllocated = %d, want ~%d", name, ts.UniqueAllocated, size)
+		}
+	}
+	if got := u.UniqueAllocated(); got < lo || got > hi {
+		t.Errorf("union = %d, want ~%d (clone-shared extents counted once); rows sum to %d",
+			got, size, a.UniqueAllocated+b.UniqueAllocated)
+	}
+	if _, err := u.Add(filepath.Join(base, "missing")); err == nil {
+		t.Error("Add(missing root) should error")
+	}
+}

@@ -64,12 +64,19 @@ func leaksCmd(ctx context.Context, app *App, args []string) int {
 		if !*asJSON {
 			printLeakDetails(app, rep)
 		}
+		// Per-action sizes are each hit's OWN unique bytes; sibling hits
+		// that clone one another share extents, so their sum over-claims.
+		// rep.Total is the union across every hit — the stale subset can
+		// free at most the smaller of the two.
 		var planned core.Bytes
 		for _, a := range actions {
 			planned += a.Size
 		}
+		if rep.Total < planned {
+			planned = rep.Total
+		}
 		if !Confirm(os.Stdin, app.Out,
-			fmt.Sprintf("Delete %d stale leak hit(s), ~%s real reclaimable?", len(actions), planned),
+			fmt.Sprintf("Delete %d stale leak hit(s), up to %s real reclaimable?", len(actions), planned),
 			*yes) {
 			_, _ = fmt.Fprintln(app.Out, "Aborted.")
 			return 0

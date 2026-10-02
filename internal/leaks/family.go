@@ -198,7 +198,7 @@ func treeFacts(path string) (newest time.Time, special string, err error) {
 // scanFamilies discovers every family under the signature's roots and
 // reports one item per family of at least MinMembers. Members (and the
 // family handle) are marked in seen so no later glob can double-count them.
-func (m *Module) scanFamilies(ctx context.Context, sig Signature, seen map[string]bool, rep *modules.Report) error {
+func (m *Module) scanFamilies(ctx context.Context, sig Signature, seen map[string]bool, rep *modules.Report, union *sizer.Union) error {
 	var open *openSet // batched lsof listing, fetched at most once per scan
 	for _, rg := range sig.Family.Roots {
 		roots, err := filepath.Glob(rg)
@@ -213,13 +213,12 @@ func (m *Module) scanFamilies(ctx context.Context, sig Signature, seen map[strin
 				if len(fam.members) < sig.Family.MinMembers {
 					continue
 				}
-				item := m.inspectFamily(ctx, sig, fam, &open)
+				item := m.inspectFamily(ctx, sig, fam, &open, union)
 				seen[item.Path] = true
 				for _, mem := range fam.members {
 					seen[mem] = true
 				}
 				rep.Items = append(rep.Items, item)
-				rep.Total += item.Size
 			}
 		}
 	}
@@ -252,7 +251,7 @@ func (o *openSet) openMember(fam family) (string, string, bool) {
 // verdict (any member open = whole family LIVE), one UniqueAllocated walk
 // over all members (clone-aware ACROSS siblings — a harness that cp -c's
 // its fixtures would otherwise du-report N copies).
-func (m *Module) inspectFamily(ctx context.Context, sig Signature, fam family, open **openSet) modules.Item {
+func (m *Module) inspectFamily(ctx context.Context, sig Signature, fam family, open **openSet, union *sizer.Union) modules.Item {
 	n := len(fam.members)
 	ev := map[string]string{
 		"signature":      sig.ID,
@@ -273,7 +272,11 @@ func (m *Module) inspectFamily(ctx context.Context, sig Signature, fam family, o
 	}
 
 	var uniq, blocks int64
-	if ts, err := sizer.UniqueAllocated(fam.members...); err == nil {
+	measure := func() (sizer.TreeSize, error) { return sizer.UniqueAllocated(fam.members...) }
+	if union != nil {
+		measure = func() (sizer.TreeSize, error) { return union.AddAll(fam.members...) }
+	}
+	if ts, err := measure(); err == nil {
 		uniq, blocks = ts.UniqueAllocated, ts.Blocks
 		ev["unique_allocated_bytes"] = strconv.FormatInt(uniq, 10)
 		ev["blocks_bytes"] = strconv.FormatInt(blocks, 10)

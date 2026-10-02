@@ -19,10 +19,12 @@ func (c *captureRunner) Run(name string, args ...string) ([]byte, error) {
 
 func TestInstallCmdWritesPlistAndCallsLaunchctl(t *testing.T) {
 	dir := t.TempDir()
+	logDir := filepath.Join(t.TempDir(), "Library", "Logs", "noo-noo")
 	r := &captureRunner{}
 	out := &bytes.Buffer{}
 	cmd := newInstallCmd(installOpts{
 		LaunchAgentDir: dir,
+		LogDir:         logDir,
 		ProgramPath:    "/usr/local/bin/noo-nood",
 		Runner:         launchd.NewWithRunner(r),
 		Out:            out,
@@ -40,6 +42,24 @@ func TestInstallCmdWritesPlistAndCallsLaunchctl(t *testing.T) {
 	}
 	if len(r.calls) == 0 || !strings.Contains(r.calls[0], "bootstrap") {
 		t.Errorf("expected launchctl bootstrap, got %v", r.calls)
+	}
+	// Daemon logs live under the log dir, which install creates up front.
+	for _, want := range []string{
+		filepath.Join(logDir, "noo-nood.log"),
+		filepath.Join(logDir, "noo-nood.err.log"),
+	} {
+		if !bytes.Contains(data, []byte("<string>"+want+"</string>")) {
+			t.Errorf("plist missing log path %q:\n%s", want, data)
+		}
+	}
+	if bytes.Contains(data, []byte("/tmp/noo-nood")) {
+		t.Errorf("plist still logs to /tmp:\n%s", data)
+	}
+	if st, err := os.Stat(logDir); err != nil || !st.IsDir() {
+		t.Errorf("log dir not created: %v", err)
+	}
+	if !strings.Contains(out.String(), logDir) {
+		t.Errorf("install output should name the log dir, got %q", out.String())
 	}
 }
 

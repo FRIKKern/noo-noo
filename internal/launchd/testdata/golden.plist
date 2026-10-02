@@ -19,8 +19,8 @@
   <key>Nice</key>
   <integer>15</integer>
   <key>StandardOutPath</key>
-  <string>/tmp/noo-nood.out.log</string>
+  <string>/Users/test/Library/Logs/noo-noo/noo-nood.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/noo-nood.err.log</string>
+  <string>/Users/test/Library/Logs/noo-noo/noo-nood.err.log</string>
 </dict>
 </plist>

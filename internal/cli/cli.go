@@ -50,7 +50,8 @@ Commands:
                            headroom, offload health, the honest verdict
   trends                   Growth sparklines, days-until-full forecast, and
                            recurring leak patterns from recorded history
-  report                   Full diagnosis (memory, top processes, big folders)
+  report                   Full diagnosis: memory (RAM, swap, compressor, top
+                           processes) then every module below, truth-sized
   startup [list|disable|restore]
                            Manage launchd auto-start services
   caches  [list|clean]     Manage ~/Library/Caches targets
@@ -59,12 +60,22 @@ Commands:
                            Find known leak classes (truth-sized, lsof-gated)
   apps    [list|clean]     Find data left behind by uninstalled apps
                            (no owning app, idle 30d, truth-sized)
+  worktrees [list|scan|clean|judge]
+                           Find dead git worktrees (merged, clean, nothing open)
   orphans [list|scan|kill] Find orphaned automation browsers (headless,
                            parent job gone) and terminate them safely
   offload [scan|plan|apply|pending|run-pending|cancel]
                            Offload bulky assets to a pinned external volume
                            (stop-gated applies can be queued with --defer and
                            re-checked later via run-pending)
+  suggestions [list|dismiss <id>]
+                           Review the daemon's recorded cleanup suggestions
+  auto-clean [enable|disable|status|history]
+                           Opt-in automatic cleanup of very-high-confidence targets
+  daemon  [start|stop|status|force-scan]
+                           Control the running noo-nood
+  install / uninstall      Register / remove the noo-nood LaunchAgent
+                           (logs in ~/Library/Logs/noo-noo)
 
 Global flags:
   -y         Skip confirmation prompts

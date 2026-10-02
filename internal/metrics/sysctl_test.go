@@ -41,6 +41,9 @@ func TestSysctlMemSize(t *testing.T) {
 	if got.SwapUsedBytes < 500_000_000 || got.SwapUsedBytes > 600_000_000 {
 		t.Errorf("SwapUsedBytes out of range: %d", got.SwapUsedBytes)
 	}
+	if got.SwapTotalBytes != 2048*1024*1024 {
+		t.Errorf("SwapTotalBytes = %d, want 2 GiB", got.SwapTotalBytes)
+	}
 	if got.Load1 != 1.20 || got.Load5 != 1.05 || got.Load15 != 0.95 {
 		t.Errorf("loadavg parse wrong: %+v", got)
 	}

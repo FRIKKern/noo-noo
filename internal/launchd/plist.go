@@ -5,6 +5,8 @@ package launchd
 import (
 	"bytes"
 	"fmt"
+	"os"
+	"path/filepath"
 	"text/template"
 )
 
@@ -30,12 +32,30 @@ const plistTmpl = `<?xml version="1.0" encoding="UTF-8"?>
   <key>Nice</key>
   <integer>15</integer>
   <key>StandardOutPath</key>
-  <string>/tmp/noo-nood.out.log</string>
+  <string>{{.OutLog}}</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/noo-nood.err.log</string>
+  <string>{{.ErrLog}}</string>
 </dict>
 </plist>
 `
+
+// Log file names inside the log directory. The cask's zap stanza and the
+// audit log already live under ~/Library/Logs/noo-noo; the daemon's stdout
+// and stderr belong next to them, not in /tmp.
+const (
+	OutLogName = "noo-nood.log"
+	ErrLogName = "noo-nood.err.log"
+)
+
+// DefaultLogDir is ~/Library/Logs/noo-noo, falling back to /tmp/noo-noo
+// only when the home directory is unknowable.
+func DefaultLogDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(os.TempDir(), "noo-noo")
+	}
+	return filepath.Join(home, "Library", "Logs", "noo-noo")
+}
 
 type plistData struct {
 	Label       string
@@ -43,6 +63,8 @@ type plistData struct {
 	Args        []string
 	RunAtLoad   string
 	KeepAlive   string
+	OutLog      string
+	ErrLog      string
 }
 
 func boolTag(b bool) string {
@@ -53,8 +75,9 @@ func boolTag(b bool) string {
 }
 
 // GeneratePlist returns the rendered LaunchAgent plist bytes for the given
-// inputs. Output is byte-stable across runs (deterministic template).
-func GeneratePlist(label, programPath string, args []string, runAtLoad, keepAlive bool) ([]byte, error) {
+// inputs, with stdout/stderr routed to OutLogName/ErrLogName inside logDir.
+// Output is byte-stable across runs (deterministic template).
+func GeneratePlist(label, programPath string, args []string, runAtLoad, keepAlive bool, logDir string) ([]byte, error) {
 	t, err := template.New("plist").Parse(plistTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
@@ -66,6 +89,8 @@ func GeneratePlist(label, programPath string, args []string, runAtLoad, keepAliv
 		Args:        args,
 		RunAtLoad:   boolTag(runAtLoad),
 		KeepAlive:   boolTag(keepAlive),
+		OutLog:      filepath.Join(logDir, OutLogName),
+		ErrLog:      filepath.Join(logDir, ErrLogName),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("execute template: %w", err)

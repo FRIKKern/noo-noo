@@ -19,9 +19,12 @@ type VMStat struct {
 	PagesFree       int64
 	PagesActive     int64
 	PagesWired      int64
-	PagesCompressed int64 // "Pages stored in compressor"
-	SwapIns         int64
-	SwapOuts        int64
+	PagesCompressed int64 // "Pages stored in compressor": logical pages the compressor holds
+	// PagesCompressorOccupied is "Pages occupied by compressor": the physical
+	// RAM those compressed pages take (what top's PhysMem calls "compressor").
+	PagesCompressorOccupied int64
+	SwapIns                 int64
+	SwapOuts                int64
 }
 
 // FreeBytes is PagesFree * PageSize.
@@ -77,6 +80,8 @@ func ParseVMStat(data []byte) (VMStat, error) {
 			v.PagesWired = n
 		case "Pages stored in compressor":
 			v.PagesCompressed = n
+		case "Pages occupied by compressor":
+			v.PagesCompressorOccupied = n
 		case "Swapins":
 			v.SwapIns = n
 		case "Swapouts":

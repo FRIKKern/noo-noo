@@ -15,12 +15,25 @@ import (
 
 func init() { Register("report", reportCmd) }
 
+// memSourcesFn supplies the memory section's inputs; tests swap in fakes.
+var memSourcesFn = defaultMemSources
+
 func reportCmd(ctx context.Context, app *App, args []string) int {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	fs.SetOutput(app.Err)
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// Memory first: the usage text promises it, and it is the cheapest,
+	// most immediate part of a diagnosis.
+	mem := gatherMemory(ctx, memSourcesFn())
+	if *asJSON {
+		_ = renderMemoryJSON(app.Out, mem)
+	} else {
+		renderMemory(app.Out, mem)
+		_, _ = fmt.Fprintln(app.Out)
 	}
 
 	_, offloadMod := offloadSetup()
@@ -35,7 +48,7 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 		offloadMod,
 	}
 
-	var grand core.Bytes
+	var grand, grandApparent core.Bytes
 	for _, m := range all {
 		rep, err := m.Scan(ctx)
 		if err != nil {
@@ -43,11 +56,13 @@ func reportCmd(ctx context.Context, app *App, args []string) int {
 			continue
 		}
 		_ = PrintReport(app.Out, rep, *asJSON)
-		grand += rep.Total
+		reclaimable, apparent := reportTotals(rep)
+		grand += reclaimable
+		grandApparent += apparent
 		_, _ = fmt.Fprintln(app.Out)
 	}
 	if !*asJSON {
-		_, _ = fmt.Fprintf(app.Out, "Grand total reclaimable: %s\n", grand)
+		_, _ = fmt.Fprintf(app.Out, "Grand total reclaimable: %s%s\n", grand, apparentSuffix(grand, grandApparent))
 	}
 	return 0
 }
