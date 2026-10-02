@@ -16,12 +16,25 @@ import (
 
 func init() { Register("report", reportCmd) }
 
+// memSourcesFn supplies the memory section's inputs; tests swap in fakes.
+var memSourcesFn = defaultMemSources
+
 func reportCmd(ctx context.Context, app *App, args []string) int {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	fs.SetOutput(app.Err)
 	asJSON := fs.Bool("json", false, "output NDJSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// Memory first: the usage text promises it, and it is the cheapest,
+	// most immediate part of a diagnosis.
+	mem := gatherMemory(ctx, memSourcesFn())
+	if *asJSON {
+		_ = renderMemoryJSON(app.Out, mem)
+	} else {
+		renderMemory(app.Out, mem)
+		_, _ = fmt.Fprintln(app.Out)
 	}
 
 	_, offloadMod := offloadSetup()
